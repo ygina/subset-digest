@@ -4,6 +4,8 @@
 #include <string.h>
 #include <glpk.h>
 
+// #define VERBOSE
+
 int main() {
     srand(24);
 
@@ -17,8 +19,10 @@ int main() {
     for (size_t packet = 0; packet < n_packets; packet++) {
         for (size_t hash = 0; hash < n_hashes; hash++) {
             BUCKET_OF(packet, hash) = rand() % n_buckets;
+#ifdef VERBOSE
             printf("Bucket of packet %4lu with hash %4lu is %4lu\n",
                    packet, hash, BUCKET_OF(packet, hash));
+#endif
         }
     }
 
@@ -44,10 +48,11 @@ redrop: dropped[i] = rand() % n_packets;
         for (size_t h = 0; h < n_hashes; h++)
             row_eq += (BUCKET_OF(dropped[d], h) == i);
         }
+#ifdef VERBOSE
         printf("Setting row bound to %lu\n", row_eq);
-        glp_set_row_bnds(prob, i + 1, GLP_UP, row_eq, row_eq);
+#endif
+        glp_set_row_bnds(prob, i + 1, GLP_FX, row_eq, row_eq);
     }
-    glp_write_mps(prob, GLP_MPS_FILE, NULL, "problem0.txt");
 
     for (size_t j = 0; j < n_packets; j++) glp_set_col_kind(prob, j + 1, GLP_BV);
 
@@ -76,12 +81,17 @@ next_hash:  continue;
         glp_set_mat_col(prob, j + 1, len, indices, values);
     }
 
-    glp_write_mps(prob, GLP_MPS_FILE, NULL, "problem.txt");
+    glp_write_lp(prob, NULL, "problem.txt");
 
     glp_iocp parm;
     glp_init_iocp(&parm);
     parm.presolve = GLP_ON;
     int result = glp_intopt(prob, &parm);
     assert(!result);
-    glp_print_sol(prob, "solution.txt");
+
+    for (size_t i = 0; i < n_packets; i++) {
+        if (glp_mip_row_val(prob, i + 1)) {
+            printf("Solution: dropped packet %4lu\n", i - 1);
+        }
+    }
 }
