@@ -9,10 +9,10 @@
 int main() {
     srand(24);
 
-    size_t n_packets = 10,
-           n_dropped = 1,
-           n_buckets = 10,
-           n_hashes = 1;
+    size_t n_packets = 1e5,
+           n_dropped = 1e2,
+           n_buckets = 1e3,
+           n_hashes = 5;
 
     size_t *buckets = malloc(n_packets * n_hashes * sizeof(buckets[0]));
 #define BUCKET_OF(packet, hash) buckets[(packet * n_hashes) + hash]
@@ -90,8 +90,7 @@ next_hash:  continue;
     assert(!result);
 
     for (size_t i = 0; i < n_packets; i++) {
-        if (glp_mip_row_val(prob, i + 1)) {
-            printf("Solution: dropped packet %4lu\n", i - 1);
-        }
+        if (glp_mip_col_val(prob, i + 1))
+            printf("Solution: dropped packet %4lu\n", i);
     }
 }
