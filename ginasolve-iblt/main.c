@@ -5,10 +5,12 @@
 #include <glpk.h>
 #include "options.h"
 #include "iblt.h"
+#include "timer.h"
 
 int ilp_list(struct bloom_cell *iblt, size_t *options, size_t *keys, size_t *n_keys);
 
 int main() {
+    start_timer();
     srand(24);
 
 #if DISJOINT_BUCKET_RANGES
@@ -29,6 +31,8 @@ redrop: dropped[i] = rand() % n_packets;
     }
     qsort(dropped, n_dropped, sizeof(dropped[0]), compare_size_ts);
 
+    print_restart_timer("SETUP");
+
     struct bloom_cell *src_table = calloc(n_buckets, sizeof(src_table[0])),
                       *dst_table = calloc(n_buckets, sizeof(dst_table[0]));
     // Insert the packets.
@@ -41,14 +45,20 @@ redrop: dropped[i] = rand() % n_packets;
         else            iblt_modify(dst_table, packets[i], IBLT_INSERT);
     }
 
+    print_restart_timer("INSERTION");
+
     // Find an IBLT for the dropped packets.
     struct bloom_cell *delta_table = iblt_subtract(src_table, dst_table);
+
+    print_restart_timer("SUBTRACTION");
 
     // List out the contents until fixedpoint.
     size_t *found_dropped = calloc(n_packets, sizeof(dropped[0])),
            n_found_dropped = 0;
     int any_left = iblt_list(delta_table, found_dropped, &n_found_dropped);
+    print_restart_timer("IBLT_LIST");
     if (any_left)  ilp_list(delta_table, packets, found_dropped, &n_found_dropped);
+    print_restart_timer("ILP_LIST");
 
     for (size_t i = 0; i < n_found_dropped; i++) {
         size_t packet = found_dropped[i];
@@ -60,6 +70,7 @@ redrop: dropped[i] = rand() % n_packets;
     }
 
     printf("Successfully solved for the dropped packets.\n");
+    print_restart_timer("CHECKING");
 
     return 0;
 }
