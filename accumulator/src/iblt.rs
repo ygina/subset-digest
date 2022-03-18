@@ -8,15 +8,19 @@ use digest::XorDigest;
 #[link(name = "ltdl", kind = "static")]
 #[link(name = "z", kind = "static")]
 extern "C" {
-    fn solve_ilp_glpk(
+    fn setup_ilp_glpk(
         n_buckets: usize,
         iblt: *const usize,
         n_hashes: usize,
         n_packets: usize,
         pkt_hashes: *const u32,
+    );
+    fn solve_ilp_glpk(
+        n_packets: usize,
         n_dropped: usize,
         dropped: *mut usize,
     ) -> i32;
+    fn negate_last_sln();
 }
 
 /// The counting bloom filter (IBLT) accumulator stores a IBLT of all processed
@@ -185,34 +189,45 @@ impl Accumulator for IBLTAccumulator {
         // the sum of the counters divided by the number of hashes, then there
         // is no solution. If there are more, there may be multiple solutions.
         let mut dropped: Vec<usize> = vec![0; n_dropped_remaining];
-        let err = unsafe {
-            solve_ilp_glpk(
+        unsafe {
+            setup_ilp_glpk(
                 counters.len(),
                 counters.as_ptr(),
                 iblt.num_hashes() as usize,
                 elems_i.len(),
                 pkt_hashes.as_ptr(),
-                n_dropped_remaining,
-                dropped.as_mut_ptr(),
             )
         };
-        let t5 = Instant::now();
-        info!("solved ILP: {:?}", t5 - t4);
-        if err == 0 {
-            // TODO: verify the XORs check out when removing these elements
-            // from the difference IBLT?
-            let mut dropped_count: HashMap<u32, usize> = HashMap::new();
-            for dropped_i in dropped {
-                let elem = elems[elems_i[dropped_i]];
-                *(dropped_count.entry(elem).or_insert(0)) += 1;
+        loop {
+            let err = unsafe {
+                solve_ilp_glpk(
+                    elems_i.len(),
+                    n_dropped_remaining,
+                    dropped.as_mut_ptr(),
+                )
+            };
+            let t5 = Instant::now();
+            info!("solved ILP: {:?}", t5 - t4);
+            if err == 0 {
+                // TODO: verify the XORs check out when removing these elements
+                // from the difference IBLT?
+                let mut dropped_count: HashMap<u32, usize> = HashMap::new();
+                for dropped_i in dropped {
+                    let elem = elems[elems_i[dropped_i]];
+                    *(dropped_count.entry(elem).or_insert(0)) += 1;
+                }
+                for elem in removed {
+                    *(dropped_count.entry(elem).or_insert(0)) += 1;
+                }
+                if crate::check_digest(elems, dropped_count, &self.digest) {
+                    return true;
+                } else {
+                    unsafe { negate_last_sln(); }
+                }
+            } else {
+                warn!("ILP solving error: {}", err);
+                return false;
             }
-            for elem in removed {
-                *(dropped_count.entry(elem).or_insert(0)) += 1;
-            }
-            crate::check_digest(elems, dropped_count, &self.digest)
-        } else {
-            warn!("ILP solving error: {}", err);
-            false
         }
     }
 }
