@@ -1,5 +1,8 @@
 use std::collections::HashMap;
 use std::time::Instant;
+
+use tokio::task;
+use tokio::runtime::Builder;
 use crate::Accumulator;
 use digest::XorDigest;
 
@@ -28,19 +31,14 @@ pub struct PowerSumAccumulator {
     power_sums: Vec<i64>,
 }
 
-#[link(name = "gmp", kind = "dylib")]
+#[link(name = "pari", kind = "dylib")]
 extern "C" {
-    fn compute_polynomial_coefficients_wrapper(
-        coeffs: *mut i64,
-        power_sums: *const i64,
-        n_values: usize,
-    );
-
-    fn find_integer_monic_polynomial_roots_wrapper(
+    fn find_integer_monic_polynomial_roots_libpari(
         roots: *mut i64,
-        coeffs: *mut i64,
+        coeffs: *const i64,
+        field: i64,
         degree: usize,
-    );
+    ) -> i32;
 }
 
 /// https://www.geeksforgeeks.org/multiply-large-integers-under-large-modulo/
@@ -103,20 +101,45 @@ fn div_and_mod(mut a: i64, mut b: i64, modulo: i64) -> i64 {
     mul_and_mod(a, mmi, modulo)
 }
 
-fn calculate_power_sums(elems: &Vec<u32>, n_values: usize) -> Vec<i64> {
-    let mut power_sums: Vec<i64> = vec![0; n_values];
-    for &elem in elems {
-        let mut value = 1;
-        for i in 0..power_sums.len() {
-            value = mul_and_mod(value, elem as i64, LARGE_PRIME);
-            power_sums[i] = (power_sums[i] + value) % LARGE_PRIME;
+async fn calculate_power_sums(elems: &Vec<u32>, num_psums: usize) -> Vec<i64> {
+    let ncpus = num_cpus::get();
+    let elems_per_thread = elems.len() / ncpus;
+    debug!("found {} cpus", ncpus);
+    let mut joins = vec![];
+    for i in 0..ncpus {
+        let lower = i * elems_per_thread;
+        let upper = if i == ncpus - 1 {
+            elems.len()
+        } else {
+            (i + 1) * elems_per_thread
+        };
+        let elems = elems[lower..upper].to_vec();  // TODO: avoid clone
+        joins.push(task::spawn(async move {
+            let mut power_sums: Vec<i64> = vec![0; num_psums];
+            for i in 0..elems.len() {
+                let mut value = 1;
+                for j in 0..power_sums.len() {
+                    value = mul_and_mod(value, elems[i] as i64, LARGE_PRIME);
+                    power_sums[j] = (power_sums[j] + value) % LARGE_PRIME;
+                }
+            }
+            power_sums
+        }));
+    }
+
+    // merge results
+    let mut power_sums: Vec<i64> = vec![0; num_psums];
+    for join in joins {
+        let result = join.await.unwrap();
+        for i in 0..num_psums {
+            power_sums[i] += result[i];
         }
     }
     power_sums
 }
 
 fn calculate_difference(lhs: Vec<i64>, rhs: &Vec<i64>) -> Vec<i64> {
-    (0..lhs.len())
+    (0..std::cmp::min(lhs.len(), rhs.len()))
         .map(|i| lhs[i] + LARGE_PRIME - rhs[i])
         .map(|power_sum| power_sum % LARGE_PRIME)
         .collect()
@@ -150,13 +173,13 @@ fn compute_polynomial_coefficients(p: Vec<i64>) -> Vec<i64> {
         }
         e.push(div_and_mod(sum, i as i64 + 1, LARGE_PRIME));
     }
-    e.remove(0); // O(n)
-    for i in 0..n {
-        if i & 1 == 0 {
+    for i in 0..(n+1) {
+        if i & 1 != 0 {
             e[i] *= -1;
             e[i] += LARGE_PRIME;
         }
     }
+    // includes the leading coefficient
     e
 
     /*
@@ -172,16 +195,22 @@ fn compute_polynomial_coefficients(p: Vec<i64>) -> Vec<i64> {
     */
 }
 
-fn find_integer_monic_polynomial_roots(mut coeffs: Vec<i64>) -> Vec<i64> {
-    let mut roots: Vec<i64> = vec![0; coeffs.len()];
-    unsafe {
-        find_integer_monic_polynomial_roots_wrapper(
+fn find_integer_monic_polynomial_roots(
+    coeffs: Vec<i64>,
+) -> Result<Vec<i64>, String> {
+    let mut roots: Vec<i64> = vec![0; coeffs.len() - 1];
+    if unsafe {
+        find_integer_monic_polynomial_roots_libpari(
             roots.as_mut_ptr(),
-            coeffs.as_mut_ptr(),
+            coeffs.as_ptr(),
+            LARGE_PRIME,
             roots.len(),
-        );
+        )
+    } == 0 {
+        Ok(roots)
+    } else {
+        Err("could not factor polynomial".to_string())
     }
-    roots
 }
 
 impl PowerSumAccumulator {
@@ -219,50 +248,73 @@ impl Accumulator for PowerSumAccumulator {
         // The number of power sum equations we need is equal to
         // the number of lost elements. Validation cannot be performed
         // if this number exceeds the threshold.
+        if elems.len() < self.total() {
+            warn!("more elements received than logged");
+            return false;
+        }
         let n_values = elems.len() - self.total();
         let threshold = self.power_sums.len();
         if n_values > threshold {
             panic!("number of lost elements exceeds threshold");
         }
 
+        // If no elements are missing, just recalculate the digest.
+        if n_values == 0 {
+            let mut digest = XorDigest::new();
+            for &elem in elems {
+                digest.add(elem);
+            }
+            return digest == self.digest;
+        }
+
         // Calculate the power sums of the given list of elements.
         // Find the difference with the power sums of the processed elements.
-        // Solve the system of equations.
         let t1 = Instant::now();
-        let power_sums = calculate_power_sums(elems, n_values);
+        let rt = Builder::new_multi_thread().enable_all().build().unwrap();
+        let power_sums = rt.block_on(async {
+            calculate_power_sums(elems, n_values).await
+        });
         let t2 = Instant::now();
         debug!("calculated power sums: {:?}", t2 - t1);
         let power_sums_diff = calculate_difference(power_sums, &self.power_sums);
         let t3 = Instant::now();
         debug!("calculated power sum difference: {:?}", t3 - t2);
-        let coeffs = compute_polynomial_coefficients(power_sums_diff);
+
+        // Solve the system of equations.
+        let coeffs = compute_polynomial_coefficients(
+            power_sums_diff[..n_values].to_vec());
         let t4 = Instant::now();
         debug!("computed polynomial coefficients: {:?}", t4 - t3);
-        let roots = find_integer_monic_polynomial_roots(coeffs);
-        let t5 = Instant::now();
-        debug!("found integer monic polynomial roots: {:?}", t5 - t4);
+        let roots = {
+            let roots = find_integer_monic_polynomial_roots(coeffs);
+            let t5 = Instant::now();
+            debug!("found integer monic polynomial roots: {:?}", t5 - t4);
+            match roots {
+                Ok(roots) => roots,
+                Err(_) => {
+                    return false;
+                }
+            }
+        };
 
-        // Check that a solution exists and that the solution is a subset of
-        // the element list.
-        let mut elem_count: HashMap<u32, usize> = HashMap::new();
-        for &elem in elems {
-            let count = elem_count.entry(elem).or_insert(0);
-            *count += 1;
-        }
+        // This technique gives a single deterministic solution.
+        // If the solutions are indeed packets in the element list, and
+        // calculating the digest from the element list with those packets
+        // removed yields the same digest, then verification succeeds.
+        let t5 = Instant::now();
+        let mut dropped_count: HashMap<u32, usize> = HashMap::new();
         for root in roots {
             let root = u32::try_from(root);
             if root.is_err() {
-                return false;
+                return false;  // Root is not in the packet domain.
             }
-            let count = elem_count.entry(root.unwrap()).or_insert(0);
-            if *count == 0 {
-                return false;
-            }
-            *count -= 1;
+            let count = dropped_count.entry(root.unwrap()).or_insert(0);
+            *count += 1;
         }
+        let res = crate::check_digest(elems, dropped_count, &self.digest);
         let t6 = Instant::now();
-        debug!("checked roots against element list: {:?}", t6 - t5);
-        true
+        debug!("recalculated digest: {:?}", t6 - t5);
+        res
     }
 }
 
@@ -285,13 +337,13 @@ mod test {
         assert_eq!(div_and_mod(8, 6, 10), 8);
     }
 
-    #[test]
-    fn test_calculate_power_sums() {
-        assert_eq!(calculate_power_sums(&vec![2, 3, 5], 2), vec![10, 38]);
-        assert_eq!(calculate_power_sums(&vec![2, 3, 5], 3), vec![10, 38, 160]);
-        let one_large_num = calculate_power_sums(&vec![4294967295], 3);
+    #[tokio::test]
+    async fn test_calculate_power_sums() {
+        assert_eq!(calculate_power_sums(&vec![2, 3, 5], 2).await, vec![10, 38]);
+        assert_eq!(calculate_power_sums(&vec![2, 3, 5], 3).await, vec![10, 38, 160]);
+        let one_large_num = calculate_power_sums(&vec![4294967295], 3).await;
         assert_eq!(one_large_num, vec![4294967295, 8947848534, 17567609286]);
-        let two_large_nums = calculate_power_sums(&vec![4294967295, 2294967295], 3);
+        let two_large_nums = calculate_power_sums(&vec![4294967295, 2294967295], 3).await;
         assert_eq!(two_large_nums, vec![6589934590, 32873368637, 30483778854]);
     }
 
@@ -305,45 +357,58 @@ mod test {
         assert_eq!(overflow_diff, vec![51539607550]);
     }
 
-    #[test]
-    fn test_compute_polynomial_coefficients_small_numbers() {
+    #[tokio::test]
+    async fn test_compute_polynomial_coefficients_small_numbers() {
         let x = vec![2, 3, 5];
-        let power_sums_diff = calculate_power_sums(&x, 3);
+        let power_sums_diff = calculate_power_sums(&x, 3).await;
         assert_eq!(power_sums_diff, vec![10, 38, 160]);
         let coeffs = compute_polynomial_coefficients(power_sums_diff);
-        assert_eq!(coeffs, vec![-10+LARGE_PRIME, 31, -30+LARGE_PRIME]);
+        assert_eq!(coeffs, vec![1, -10+LARGE_PRIME, 31, -30+LARGE_PRIME]);
     }
 
-    #[test]
-    fn test_compute_polynomial_coefficients_large_numbers() {
+    #[tokio::test]
+    async fn test_compute_polynomial_coefficients_large_numbers() {
         let x = vec![4294966796, 3987231002];
-        let power_sums_diff = calculate_power_sums(&x, 2);
+        let power_sums_diff = calculate_power_sums(&x, 2).await;
         assert_eq!(power_sums_diff, vec![8282197798, 20796235250]);
         let coeffs = compute_polynomial_coefficients(power_sums_diff);
         let e1 = (x[0] as i64) + (x[1] as i64) % LARGE_PRIME;
         let e2 = mul_and_mod(x[0] as i64, x[1] as i64, LARGE_PRIME);
-        assert_eq!(coeffs, vec![-e1+LARGE_PRIME, e2]);
+        assert_eq!(coeffs, vec![1, -e1+LARGE_PRIME, e2]);
     }
 
-    #[ignore]
-    #[test]
-    fn test_find_integer_monic_polynomial_roots_small_numbers() {
+    #[tokio::test]
+    async fn test_find_integer_monic_polynomial_roots_small_numbers() {
         let x = vec![2, 3, 5];
-        let power_sums_diff = calculate_power_sums(&x, x.len());
+        let power_sums_diff = calculate_power_sums(&x, x.len()).await;
         let coeffs = compute_polynomial_coefficients(power_sums_diff);
-        let mut roots = find_integer_monic_polynomial_roots(coeffs);
+        let mut roots = {
+            let roots = find_integer_monic_polynomial_roots(coeffs);
+            assert!(roots.is_ok());
+            roots.unwrap()
+        };
         roots.sort();
         assert_eq!(roots, x.into_iter().map(|x| x as i64).collect::<Vec<_>>());
     }
 
-    #[ignore]
-    #[test]
-    fn test_find_integer_monic_polynomial_roots_large_numbers() {
-        let x = vec![4294966796, 3987231002];
-        let power_sums_diff = calculate_power_sums(&x, x.len());
+    #[tokio::test]
+    async fn test_find_integer_monic_polynomial_roots_large_numbers() {
+        let x = vec![3987231002, 4294966796];
+        let power_sums_diff = calculate_power_sums(&x, x.len()).await;
         let coeffs = compute_polynomial_coefficients(power_sums_diff);
-        let mut roots = find_integer_monic_polynomial_roots(coeffs);
+        let mut roots = {
+            let roots = find_integer_monic_polynomial_roots(coeffs);
+            assert!(roots.is_ok());
+            roots.unwrap()
+        };
         roots.sort();
         assert_eq!(roots, x.into_iter().map(|x| x as i64).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn test_find_integer_monic_polynomial_roots_no_solution() {
+        let coeffs = vec![1, 47920287469, 12243762544, 39307197049];
+        let roots = find_integer_monic_polynomial_roots(coeffs);
+        assert!(roots.is_err());
     }
 }
