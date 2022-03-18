@@ -212,11 +212,11 @@ impl Accumulator for IBLTAccumulator {
                 // TODO: verify the XORs check out when removing these elements
                 // from the difference IBLT?
                 let mut dropped_count: HashMap<u32, usize> = HashMap::new();
-                for dropped_i in dropped {
+                for &dropped_i in &dropped {
                     let elem = elems[elems_i[dropped_i]];
                     *(dropped_count.entry(elem).or_insert(0)) += 1;
                 }
-                for elem in removed {
+                for &elem in &removed {
                     *(dropped_count.entry(elem).or_insert(0)) += 1;
                 }
                 if crate::check_digest(elems, dropped_count, &self.digest) {
