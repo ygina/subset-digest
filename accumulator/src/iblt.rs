@@ -4,7 +4,9 @@ use bloom_sd::InvBloomLookupTable;
 use crate::Accumulator;
 use digest::XorDigest;
 
-#[link(name = "glpk", kind = "dylib")]
+#[link(name = "glpk", kind = "static")]
+#[link(name = "ltdl", kind = "static")]
+#[link(name = "z", kind = "static")]
 extern "C" {
     fn solve_ilp_glpk(
         n_buckets: usize,

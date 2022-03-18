@@ -31,7 +31,8 @@ pub struct PowerSumAccumulator {
     power_sums: Vec<i64>,
 }
 
-#[link(name = "pari", kind = "dylib")]
+#[link(name = "pari", kind = "static")]
+#[link(name = "gmp", kind = "static")]
 extern "C" {
     fn find_integer_monic_polynomial_roots_libpari(
         roots: *mut i64,
