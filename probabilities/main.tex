@@ -1,0 +1,77 @@
+\documentclass{article}
+
+\usepackage{biblatex}
+\addbibresource{main.bib}
+
+\begin{document}
+
+\section{Introduction}
+Routers can be bad. We want to audit them. Yada yada.
+
+%%%%%% Methods %%%%%%
+\section{Hash Digest Approach}
+\subsection{Method}
+As the ISP receives packets, it maintains a streaming cryptographic multiset
+hash~\cite{clarke2003incremental}.
+
+Let $n$ be the number of packets in the router digest, $r$ be the number
+received by the ISP.
+
+During an audit, we first check if $n - r$ is in a predetermined constant
+range. Then we consider all $\binom{n}{n - r}$ subsets of the router log $L$,
+and hash each one. The audit passes if at least one of those subsets hashes to
+the ISP's multiset hash value.
+
+\subsection{Analysis}
+We assume the router controls its log $L$, as well as the set $I$ of packets
+the ISP receives. We want to know how hard it is to construct an $I, L$ such
+that $I \not\subset L$ but there is some $F \subset L$ such that $I$ and $F$
+collide under the multiset hash.
+
+\cite{clarke2003incremental} can be summarized as follows:
+\begin{itemize}
+    \item `A multiset hash function is multiset-collision resistant if it is
+        computationally infeasible to find multisets $S, M$ such that the
+        cardinalities of $S$ and $M$ are of polynomial size in $m$, $S \neq M$,
+        and they are equivalent under the multiset hash.'
+    \item Specifically, the game is we pick a key for the hash, then the ppt
+        (in $m$) adversary tries to generate $(S, M)$ that collide. The
+        probability of this should be less than $m^{-c}$, where $m$ is the
+        bitlength of the hash output and $c$ is a constant.
+\end{itemize}
+
+So let's see if we can get a reduction. We want to show that if the router
+could break our scheme, they could win the multiset collision game. So, assume
+the router has constructed an $I, L$ such that $I \not\subset L$ but there
+exists an $F \subset L$ such that $I$ and $F$ collide under the multiset hash.
+That seems like a collision, but the problem is there are $2^L$ possible
+subsets, so actually \emph{finding} $F$ may be infeasible.
+
+However, if we assume the number of dropped packets is bounded by a constant,
+then there are only polynomially many such subsets and they can be enumerated
+(and checked) in polynomial time. So that would give us an algorithm for
+collision, so our reduction should work.
+
+I think here the polynomial is in $m$, which is (essentially) the size of our
+hash.
+
+More generally, even with the heuristics below, I think what we can claim is:
+if the auditing process runs in polynomial time (wrt the size of the hash),
+then it's secure. Because otherwise the router could do the audit itself, find
+the collision, and win the game in ppt.
+
+%%%%%% Power Series %%%%%%
+\section{Power Series Heuristic}
+\subsection{Method}
+
+\subsection{Analysis}
+
+%%%%%% IBLT %%%%%%
+\section{IBLT Heuristic}
+\subsection{Method}
+
+\subsection{Analysis}
+
+\printbibliography
+
+\end{document}
