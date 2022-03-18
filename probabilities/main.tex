@@ -63,8 +63,26 @@ the collision, and win the game in ppt.
 %%%%%% Power Series %%%%%%
 \section{Power Series Heuristic}
 \subsection{Method}
+For a threshold $t$ of dropped packets, the ISP keeps track of power sums $p_i$
+up to $t$ of the packets it receives.
+
+Upon audit, the power sums $q_i$ from the log are computed as well. Then we
+compute $q_i - p_i$ to get the power sums of the dropped packets. This system
+is solved to identify the dropped packets $D$. Then we compute the hash-sum of
+the digest hash with the hash of the dropped packets to get the hash of the
+multi-set union of the two, and compare that to the hash of the log.
 
 \subsection{Analysis}
+If the router is honest, the final comparison will pass.
+
+Based on the analysis in the previous section, all we need to do is show that
+the auditing process runs in time polynomial to $m$, the bitlength of the hash.
+
+Suppose we want to support a log of size at most $l$, at most $t$ dropped
+packets, and we choose a message length of size $l + t$. Then all the steps
+(computing power sums from the log, subtracting the digest from those, solving
+the system, computing the hash of the difference, adding to the original hash,
+and comparing) should all take poly time.
 
 %%%%%% IBLT %%%%%%
 \section{IBLT Heuristic}
