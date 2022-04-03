@@ -1,16 +1,16 @@
 #[macro_use]
 extern crate log;
 
-mod cbf;
-mod iblt;
+// mod cbf;
+// mod iblt;
 mod naive;
 mod power_sum;
 
 use std::collections::HashMap;
 use digest::Digest;
 
-pub use cbf::CBFAccumulator;
-pub use iblt::IBLTAccumulator;
+// pub use cbf::CBFAccumulator;
+// pub use iblt::IBLTAccumulator;
 pub use naive::NaiveAccumulator;
 pub use power_sum::PowerSumAccumulator;
 
@@ -67,13 +67,16 @@ mod tests {
         let dropped_is: Vec<usize> = (0..num_dropped)
             .map(|_| rng.gen_range(0..num_logged)).collect();
         let malicious_i: usize = rng.gen_range(0..num_logged);
+        println!("Processing...");
         for i in 0..elems.len() {
+            if i % 100 == 0 { println!("{}", i); }
             if malicious && malicious_i == i {
                 accumulator.process(MALICIOUS_ELEM);
             } else if !dropped_is.contains(&i) {
                 accumulator.process(elems[i]);
             }
         }
+        println!("Processed!");
         let valid = accumulator.validate(&elems);
         assert_eq!(valid, !malicious);
     }
@@ -142,8 +145,8 @@ mod tests {
 
     #[test]
     fn power_sum_many_dropped() {
-        let accumulator = PowerSumAccumulator::new(1000);
-        base_accumulator_test(Box::new(accumulator), 1000, 10, false);
+        let accumulator = PowerSumAccumulator::new(2000);
+        base_accumulator_test(Box::new(accumulator), 2000, 10, false);
     }
 
     #[test]
@@ -165,89 +168,89 @@ mod tests {
         base_accumulator_test(Box::new(accumulator), 1000, 10, true);
     }
 
-    #[test]
-    fn cbf_none_dropped() {
-        let accumulator = CBFAccumulator::new(100);
-        base_accumulator_test(Box::new(accumulator), 100, 0, false);
-    }
+    // #[test]
+    // fn cbf_none_dropped() {
+    //     let accumulator = CBFAccumulator::new(100);
+    //     base_accumulator_test(Box::new(accumulator), 100, 0, false);
+    // }
 
-    #[test]
-    fn cbf_one_dropped() {
-        let accumulator = CBFAccumulator::new(100);
-        base_accumulator_test(Box::new(accumulator), 100, 1, false);
-    }
+    // #[test]
+    // fn cbf_one_dropped() {
+    //     let accumulator = CBFAccumulator::new(100);
+    //     base_accumulator_test(Box::new(accumulator), 100, 1, false);
+    // }
 
-    #[test]
-    fn cbf_two_dropped() {
-        let accumulator = CBFAccumulator::new(100);
-        base_accumulator_test(Box::new(accumulator), 100, 2, false);
-    }
+    // #[test]
+    // fn cbf_two_dropped() {
+    //     let accumulator = CBFAccumulator::new(100);
+    //     base_accumulator_test(Box::new(accumulator), 100, 2, false);
+    // }
 
-    #[test]
-    fn cbf_many_dropped() {
-        let accumulator = CBFAccumulator::new(1000);
-        base_accumulator_test(Box::new(accumulator), 1000, 10, false);
-    }
+    // #[test]
+    // fn cbf_many_dropped() {
+    //     let accumulator = CBFAccumulator::new(1000);
+    //     base_accumulator_test(Box::new(accumulator), 1000, 10, false);
+    // }
 
-    #[test]
-    fn cbf_one_malicious_and_none_dropped() {
-        let accumulator = CBFAccumulator::new(100);
-        base_accumulator_test(Box::new(accumulator), 100, 0, true);
-    }
+    // #[test]
+    // fn cbf_one_malicious_and_none_dropped() {
+    //     let accumulator = CBFAccumulator::new(100);
+    //     base_accumulator_test(Box::new(accumulator), 100, 0, true);
+    // }
 
-    #[test]
-    fn cbf_one_malicious_and_one_dropped() {
-        let accumulator = CBFAccumulator::new(100);
-        base_accumulator_test(Box::new(accumulator), 100, 1, true);
-    }
+    // #[test]
+    // fn cbf_one_malicious_and_one_dropped() {
+    //     let accumulator = CBFAccumulator::new(100);
+    //     base_accumulator_test(Box::new(accumulator), 100, 1, true);
+    // }
 
-    #[test]
-    fn cbf_one_malicious_and_many_dropped() {
-        // validation is much faster compared to the naive approach,
-        // so we increase the number of packets
-        let accumulator = CBFAccumulator::new(100);
-        base_accumulator_test(Box::new(accumulator), 1000, 10, true);
-    }
+    // #[test]
+    // fn cbf_one_malicious_and_many_dropped() {
+    //     // validation is much faster compared to the naive approach,
+    //     // so we increase the number of packets
+    //     let accumulator = CBFAccumulator::new(100);
+    //     base_accumulator_test(Box::new(accumulator), 1000, 10, true);
+    // }
 
-    #[test]
-    fn iblt_none_dropped() {
-        let accumulator = IBLTAccumulator::new(100);
-        base_accumulator_test(Box::new(accumulator), 100, 0, false);
-    }
+    // #[test]
+    // fn iblt_none_dropped() {
+    //     let accumulator = IBLTAccumulator::new(100);
+    //     base_accumulator_test(Box::new(accumulator), 100, 0, false);
+    // }
 
-    #[test]
-    fn iblt_one_dropped() {
-        let accumulator = IBLTAccumulator::new(100);
-        base_accumulator_test(Box::new(accumulator), 100, 1, false);
-    }
+    // #[test]
+    // fn iblt_one_dropped() {
+    //     let accumulator = IBLTAccumulator::new(100);
+    //     base_accumulator_test(Box::new(accumulator), 100, 1, false);
+    // }
 
-    #[test]
-    fn iblt_many_dropped_without_ilp_solver() {
-        let accumulator = IBLTAccumulator::new(1000);
-        base_accumulator_test(Box::new(accumulator), 1000, 10, false);
-    }
+    // #[test]
+    // fn iblt_many_dropped_without_ilp_solver() {
+    //     let accumulator = IBLTAccumulator::new(1000);
+    //     base_accumulator_test(Box::new(accumulator), 1000, 10, false);
+    // }
 
-    #[test]
-    fn iblt_many_dropped_with_ilp_solver() {
-        let accumulator = IBLTAccumulator::new_with_rate(1000, 0.1);
-        base_accumulator_test(Box::new(accumulator), 1000, 100, false);
-    }
+    // #[test]
+    // fn iblt_many_dropped_with_ilp_solver() {
+    //     let accumulator = IBLTAccumulator::new_with_rate(1000, 0.1);
+    //     base_accumulator_test(Box::new(accumulator), 1000, 100, false);
+    // }
 
-    #[test]
-    fn iblt_one_malicious_and_none_dropped() {
-        let accumulator = IBLTAccumulator::new(100);
-        base_accumulator_test(Box::new(accumulator), 100, 0, true);
-    }
+    // #[test]
+    // fn iblt_one_malicious_and_none_dropped() {
+    //     let accumulator = IBLTAccumulator::new(100);
+    //     base_accumulator_test(Box::new(accumulator), 100, 0, true);
+    // }
 
-    #[test]
-    fn iblt_one_malicious_and_one_dropped() {
-        let accumulator = IBLTAccumulator::new(100);
-        base_accumulator_test(Box::new(accumulator), 100, 1, true);
-    }
+    // #[test]
+    // fn iblt_one_malicious_and_one_dropped() {
+    //     let accumulator = IBLTAccumulator::new(100);
+    //     base_accumulator_test(Box::new(accumulator), 100, 1, true);
+    // }
 
-    #[test]
-    fn iblt_one_malicious_and_many_dropped() {
-        let accumulator = IBLTAccumulator::new(100);
-        base_accumulator_test(Box::new(accumulator), 1000, 10, true);
-    }
+    // #[test]
+    // fn iblt_one_malicious_and_many_dropped() {
+    //     let accumulator = IBLTAccumulator::new(100);
+    //     base_accumulator_test(Box::new(accumulator), 1000, 10, true);
+    // }
 }
