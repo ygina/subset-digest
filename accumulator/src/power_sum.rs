@@ -230,10 +230,15 @@ impl Accumulator for PowerSumAccumulator {
         self.digest.add(elem);
         self.num_elems += 1;
         let big_elem: BigInt = BigInt::new(Sign::Plus, vec![elem]);
+        let big_large_prime: BigInt
+            = BigInt::new(Sign::Plus, vec![
+              (LARGE_PRIME % ((1 as i64) << 32)) as u32,
+              (LARGE_PRIME >> 32) as u32
+            ]);
         let mut value: BigInt = BigInt::new(Sign::Plus, vec![1]);
         for i in 0..self.power_sums.len() {
             value *= &big_elem;
-            // value = value % LARGE_PRIME;
+            value %= &big_large_prime;
             // let (_, digits) = value.to_u64_digits();
             // self.power_sums[i] = self.power_sums[i] + (digits[0] as i64);
             // self.power_sums[i] = self.power_sums[i] % LARGE_PRIME;
