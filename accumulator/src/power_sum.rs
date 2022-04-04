@@ -45,15 +45,28 @@ pub struct PowerSumAccumulator {
 
 /// https://www.geeksforgeeks.org/multiply-large-integers-under-large-modulo/
 fn mul_and_mod(mut a: i64, mut b: i64, modulo: i64) -> i64 {
-    let mut res = 0;
-    while b > 0 {
-        if (b & 1) == 1 {
-            res = (res + a) % modulo;
-        }
-        a = (2 * a) % modulo;
-        b >>= 1; // b = b / 2
-    }
-    res
+    let mul: i128 = (a as i128) * (b as i128);
+    return (mul % (modulo as i128)) as i64;
+    // // Do the multiplication in 32-bit chunks
+    // let a_lo = a & 0xffffffff;
+    // let a_hi = (a >> 32) & 0xffffffff;
+    // let b_lo = b & 0xffffffff;
+    // let b_hi = (b >> 32) & 0xffffffff;
+    // // a*b = ((a_hi << 32) + a_lo)((b_hi << 32) + b_lo)
+    // //     = ((a_hi * b_hi) << 64) + ((a_hi * b_lo + b_hi * a_lo) << 32) + a_lo*b_lo
+    // let mut res: u64 = a_lo * b_lo;
+    // res += ((
+    //         + (((a_hi * b_lo) % modulo) + ((b_hi * a_lo) % modulo)) /* << 32 */
+    //         + (((a_hi * b_lo) % modulo) + ((b_hi * a_lo) % modulo)) /* << 32 */
+    // let mut res = 0;
+    // while b > 0 {
+    //     if (b & 1) == 1 {
+    //         res = (res + a) % modulo;
+    //     }
+    //     a = (2 * a) % modulo;
+    //     b >>= 1; // b = b / 2
+    // }
+    // res
 }
 
 // modular division
@@ -226,34 +239,34 @@ impl PowerSumAccumulator {
 }
 
 impl Accumulator for PowerSumAccumulator {
-    fn process(&mut self, elem: u32) {
-        self.digest.add(elem);
-        self.num_elems += 1;
-        let big_elem: BigInt = BigInt::new(Sign::Plus, vec![elem]);
-        let big_large_prime: BigInt
-            = BigInt::new(Sign::Plus, vec![
-              (LARGE_PRIME % ((1 as i64) << 32)) as u32,
-              (LARGE_PRIME >> 32) as u32
-            ]);
-        let mut value: BigInt = BigInt::new(Sign::Plus, vec![1]);
-        for i in 0..self.power_sums.len() {
-            value *= &big_elem;
-            value %= &big_large_prime;
-            // let (_, digits) = value.to_u64_digits();
-            // self.power_sums[i] = self.power_sums[i] + (digits[0] as i64);
-            // self.power_sums[i] = self.power_sums[i] % LARGE_PRIME;
-        }
-    }
-
     // fn process(&mut self, elem: u32) {
     //     self.digest.add(elem);
     //     self.num_elems += 1;
-    //     let mut value: i64 = 1;
+    //     let big_elem: BigInt = BigInt::new(Sign::Plus, vec![elem]);
+    //     let big_large_prime: BigInt
+    //         = BigInt::new(Sign::Plus, vec![
+    //           (LARGE_PRIME % ((1 as i64) << 32)) as u32,
+    //           (LARGE_PRIME >> 32) as u32
+    //         ]);
+    //     let mut value: BigInt = BigInt::new(Sign::Plus, vec![1]);
     //     for i in 0..self.power_sums.len() {
-    //         value = mul_and_mod(value, elem as i64, LARGE_PRIME);
-    //         self.power_sums[i] = (self.power_sums[i] + value) % LARGE_PRIME;
+    //         value *= &big_elem;
+    //         value %= &big_large_prime;
+    //         // let (_, digits) = value.to_u64_digits();
+    //         // self.power_sums[i] = self.power_sums[i] + (digits[0] as i64);
+    //         // self.power_sums[i] = self.power_sums[i] % LARGE_PRIME;
     //     }
     // }
+
+    fn process(&mut self, elem: u32) {
+        self.digest.add(elem);
+        self.num_elems += 1;
+        let mut value: i64 = 1;
+        for i in 0..self.power_sums.len() {
+            value = mul_and_mod(value, elem as i64, LARGE_PRIME);
+            self.power_sums[i] = (self.power_sums[i] + value) % LARGE_PRIME;
+        }
+    }
 
     fn process_batch(&mut self, elems: &Vec<u32>) {
         for &elem in elems {
