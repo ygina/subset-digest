@@ -273,22 +273,22 @@ impl Accumulator for PowerSumAccumulator {
     }
 
     #[cfg(feature = "disable_validation")]
-    fn validate(&self, _elems: &Vec<BigUint>) -> bool {
+    fn validate(&self, _elems: &Vec<BigUint>) -> Result<Vec<usize>, ()> {
         panic!("validation not enabled")
     }
 
     #[cfg(not(feature = "disable_validation"))]
-    fn validate(&self, elems: &Vec<BigUint>) -> bool {
+    fn validate(&self, elems: &Vec<BigUint>) -> Result<Vec<usize>, ()> {
         if self.total() == 0 {
             warn!("no elements received, valid by default");
-            return true;
+            return Ok(vec![]);
         }
         // The number of power sum equations we need is equal to
         // the number of lost elements. Validation cannot be performed
         // if this number exceeds the threshold.
         if elems.len() < self.total() {
             warn!("more elements received than logged");
-            return false;
+            return Err(());
         }
         let n_values = elems.len() - self.total();
         let threshold = self.power_sums.len();
@@ -302,7 +302,11 @@ impl Accumulator for PowerSumAccumulator {
             for elem in elems {
                 digest.add(elem);
             }
-            return digest.equals(&self.digest);
+            return if digest.equals(&self.digest) {
+                Ok(vec![])
+            } else {
+                Err(())
+            };
         }
 
         // Calculate the power sums of the given list of elements.
@@ -332,7 +336,7 @@ impl Accumulator for PowerSumAccumulator {
             match roots {
                 Ok(roots) => roots,
                 Err(_) => {
-                    return false;
+                    return Err(());
                 }
             }
         };
@@ -348,7 +352,7 @@ impl Accumulator for PowerSumAccumulator {
             for root in roots {
                 let root = u32::try_from(root);
                 if root.is_err() {
-                    return false;  // Root is not in the packet domain.
+                    return Err(());  // Root is not in the packet domain.
                 }
                 let count = map.entry(root.unwrap()).or_insert(0);
                 *count += 1;
@@ -358,11 +362,13 @@ impl Accumulator for PowerSumAccumulator {
 
         let mut digest = Digest::new();
         let mut collisions: HashMap<u32, Vec<BigUint>> = HashMap::new();
+        let mut added: HashMap<BigUint, usize> = HashMap::new();
         for elem in elems {
             let elem_u32 = elem_to_u32(elem);
             if !dropped_counts.contains_key(&elem_u32) {
                 // If an element in the log doesn't hash to a u32 root,
                 // it wasn't dropped, so add it to the digest.
+                *added.entry(elem.clone()).or_insert(0) += 1;
                 digest.add(elem);
             } else {
                 // Otherwise collect every element that maps to a u32 root.
@@ -374,6 +380,7 @@ impl Accumulator for PowerSumAccumulator {
 
         let mut combinations = vec![];
         let mut dropped = 0;
+
         for (elem_u32, &dropped_count) in dropped_counts.iter() {
             if let Some(elems) = collisions.get(&elem_u32) {
                 if dropped_count == elems.len() {
@@ -381,12 +388,14 @@ impl Accumulator for PowerSumAccumulator {
                     dropped += dropped_count;
                 } else if dropped_count > elems.len() {
                     error!("more elements dropped than exist candidates");
-                    return false;
+                    return Err(());
                 } else {
                     let received_count = elems.len() - dropped_count;
                     if elems.iter().collect::<HashSet<_>>().len() == 1 {
                         // only one unique element so it was dropped
                         digest.add_all(&elems[..received_count].to_vec());
+                        *added.entry(elems[0].clone()).or_insert(0) +=
+                            received_count;
                         dropped += dropped_count;
                         continue;
                     }
@@ -399,6 +408,7 @@ impl Accumulator for PowerSumAccumulator {
                             *entry += 1;
                         } else {
                             // By Pigeonhole it couldn't have been dropped
+                            *added.entry(elem.clone()).or_insert(0) += 1;
                             digest.add(elem);
                         }
                     }
@@ -411,7 +421,7 @@ impl Accumulator for PowerSumAccumulator {
                 }
             } else {
                 error!("dropped element does not exist in log: {}", elem_u32);
-                return false;
+                return Err(());
             }
         }
         let t7 = Instant::now();
@@ -422,17 +432,45 @@ impl Accumulator for PowerSumAccumulator {
         for curr in combinations.into_iter().multi_cartesian_product() {
             // check curr, if good return it else return None
             let mut digest = digest.clone();
-            for elem in curr.into_iter().flat_map(|val| val) {
+            for elem in curr.clone().into_iter().flat_map(|val| val) {
                 digest.add(&elem);
             }
             n_digests += 1;
             if digest.equals(&self.digest) {
-                return true;
+                // Convert the added elements into dropped indexes.
+                for elem in curr.into_iter().flat_map(|val| val) {
+                    *added.entry(elem).or_insert(0) += 1;
+                }
+                let mut dropped_is = vec![];
+                for i in 0..elems.len() {
+                    if let Some(count) = added.get_mut(&elems[i]) {
+                        if *count > 0 {
+                            *count -= 1;
+                            continue;
+                        }
+                    }
+                    dropped_is.push(i);
+                }
+                return Ok(dropped_is);
             }
         }
         let t8 = Instant::now();
         debug!("recalculated {} digests: {:?}", n_digests, t8 - t7);
-        digest.equals(&self.digest)
+        if digest.equals(&self.digest) {
+            let mut dropped_is = vec![];
+            for i in 0..elems.len() {
+                if let Some(count) = added.get_mut(&elems[i]) {
+                    if *count > 0 {
+                        *count -= 1;
+                        continue;
+                    }
+                }
+                dropped_is.push(i);
+            }
+            Ok(dropped_is)
+        } else {
+            Err(())
+        }
     }
 }
 

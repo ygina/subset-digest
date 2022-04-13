@@ -53,29 +53,42 @@ impl Accumulator for NaiveAccumulator {
     }
 
     #[cfg(feature = "disable_validation")]
-    fn validate(&self, _elems: &Vec<BigUint>) -> bool {
+    fn validate(&self, _elems: &Vec<BigUint>) -> Result<Vec<usize>, ()> {
         panic!("validation not enabled")
     }
 
     #[cfg(not(feature = "disable_validation"))]
-    fn validate(&self, elems: &Vec<BigUint>) -> bool {
+    fn validate(&self, elems: &Vec<BigUint>) -> Result<Vec<usize>, ()> {
         let start = Instant::now();
         for (i, combination) in (0..elems.len())
                 .combinations(self.num_elems).enumerate() {
             let mut digest = Digest::new();
             // We could amortize digest calculation using the previous digest,
             // but it's still exponential in the number of subsets
-            for index in combination {
+            for &index in &combination {
                 digest.add(&elems[index]);
             }
             if digest.equals(&self.digest) {
-                return true;
+                let mut dropped_is = vec![];
+                let mut i = 0;
+                for index in combination {
+                    while i < index {
+                        dropped_is.push(i);
+                        i += 1;
+                    }
+                    i += 1;
+                }
+                while i < elems.len() {
+                    dropped_is.push(i);
+                    i += 1;
+                }
+                return Ok(dropped_is);
             }
             if i % 1000 == 0 && i != 0 {
                 debug!("tried {} combinations: {:?}", i, Instant::now() - start);
             }
         }
-        false
+        Err(())
     }
 }
 

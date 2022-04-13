@@ -111,7 +111,6 @@ fn get_router_logs(
     debug!("parsing pcap format {} bytes", data.len());
     let mut reader = create_reader(65536, Cursor::new(data)).unwrap();
     let mut res = Vec::new();
-    let mut n = 0;
     let mut maybe_truncated = false;
     loop {
         match reader.next() {
@@ -119,17 +118,14 @@ fn get_router_logs(
                 maybe_truncated = false;
                 match block {
                     PcapBlockOwned::Legacy(block) => {
-                        n += 1;
                         res.push(BigUint::from_bytes_be(&block.data[14..(14 + nbytes)]));
-                        if n % 1000 == 0 {
-                            debug!("processed {} packets", n);
-                        }
                     },
                     PcapBlockOwned::NG(block) => {
                         debug!("ignoring NG({:?}) offset={}", block, offset);
                     },
                     PcapBlockOwned::LegacyHeader(block) => {
-                        debug!("ignoring LegacyHeader({:?}) offset={}", block, offset);
+                        trace!("ignoring LegacyHeader({:?}) offset={}", block,
+                           offset);
                     },
                 }
                 reader.consume(offset);
@@ -160,6 +156,25 @@ fn to_map(logs: &Vec<BigUint>) -> HashMap<BigUint, Vec<usize>> {
     let mut map: HashMap<BigUint, Vec<usize>> = HashMap::new();
     for (i, entry) in logs.iter().enumerate() {
         (*map.entry(entry.clone()).or_insert(vec![])).push(i+1);
+    }
+    map
+}
+
+fn to_map_limits(
+    logs: &Vec<BigUint>,
+    start_i: usize,
+    end_i: usize,
+) -> HashMap<BigUint, Vec<usize>> {
+    assert!(start_i < logs.len());
+    assert!(end_i <= logs.len());
+    let missing = start_i + logs.len() - end_i;
+    debug!("to_map_limits {}-{}={} packets", logs.len(), missing, logs.len() -
+        missing);
+    debug!("range {} to {}", start_i, end_i);
+    let mut map: HashMap<BigUint, Vec<usize>> = HashMap::new();
+    for i in start_i..end_i {
+        let entry = logs[i].clone();
+        (*map.entry(entry).or_insert(vec![])).push(i+1);
     }
     map
 }
@@ -212,21 +227,25 @@ fn compare_maps(m1: HashMap<BigUint, Vec<usize>>, m2: HashMap<BigUint, Vec<usize
     debug!("{} shared keys", shared_keys.len());
     debug!("{} keys in m1 only", m1_only.len());
     debug!("{} keys in m2 only", m2_only.len());
+    let mut not_subset_shared_keys = 0;
     for k in &shared_keys {
         let m1_v = m1.get(k).unwrap();
         let m2_v = m2.get(k).unwrap();
         if m1_v.len() < m2_v.len() {
-            debug!("shared key 0x{:X} values differ: {:?} < {:?}", k, m1_v,
-               m2_v);
+            debug!("shared key 0x{:X} invalid: {:?} < {:?}", k, m1_v, m2_v);
+            not_subset_shared_keys += 1;
+        } else if m1_v.len() > m2_v.len() {
+            debug!("shared key 0x{:X} valid: {:?} < {:?}", k, m1_v, m2_v);
         }
     }
+    debug!("not subset shared keys: {}", not_subset_shared_keys);
     // debug!("keys in m1 but not m2: {}", m1_only.len());
     // for k in m1_only {
     //     println!("0x{:X} {:?}", k, m1.get(&k).unwrap());
     // }
     debug!("keys in m2 but not m1: {}", m2_only.len());
     for k in m2_only {
-        println!("0x{:X} {:?}", k, m2.get(&k).unwrap());
+        // println!("0x{:X} {:?}", k, m2.get(&k).unwrap());
     }
 }
 
@@ -240,7 +259,13 @@ fn check_acc_logs(
 ) {
     info!("router logs:");
     let router_logs = get_router_logs(router_ssh, router_filename, bytes);
-    let router_logs_map = to_map(&router_logs);
+    let router_logs_map = to_map_limits(
+        &router_logs,
+        31,
+        router_logs.len() - 50,
+    );
+    // 970 - 889 = 81
+    // 32+48=80
     for i in 0..std::cmp::min(10, router_logs.len()) {
         println!("0x{:X}", router_logs[i]);
     }
@@ -340,8 +365,8 @@ fn main() {
         );
         info!("{}/{} packets received", accumulator.total(), router_logs.len());
         assert!(accumulator.total() <= router_logs.len());
-        if accumulator.validate(&router_logs) {
-            info!("valid router");
+        if let Ok(dropped_is) = accumulator.validate(&router_logs) {
+            info!("valid router, dropped {:?}", dropped_is);
         } else {
             warn!("invalid router");
         }

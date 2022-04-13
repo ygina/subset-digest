@@ -6,11 +6,7 @@ mod iblt;
 mod naive;
 mod power_sum;
 
-#[cfg(not(feature = "disable_validation"))]
-use std::collections::HashMap;
 use num_bigint::BigUint;
-#[cfg(not(feature = "disable_validation"))]
-use digest::Digest;
 
 pub use cbf::CBFAccumulator;
 pub use iblt::IBLTAccumulator;
@@ -29,27 +25,9 @@ pub trait Accumulator {
     /// Validate the accumulator against a list of elements.
     ///
     /// The accumulator is valid if the elements that the accumulator has
-    /// processed are a subset of the provided list of elements.
-    fn validate(&self, elems: &Vec<BigUint>) -> bool;
-}
-
-#[cfg(not(feature = "disable_validation"))]
-fn check_digest(
-    elems: &Vec<BigUint>,
-    mut dropped_count: HashMap<BigUint, usize>,
-    expected: &Digest,
-) -> bool {
-    let mut digest = Digest::new();
-    for elem in elems {
-        if let Some(count) = dropped_count.remove(elem) {
-            if count > 0 {
-                dropped_count.insert(elem.clone(), count - 1);
-            }
-        } else {
-            digest.add(elem);
-        }
-    }
-    digest.equals(expected)
+    /// processed are a subset of the provided list of elements. If valid,
+    /// the function also returns the indexes of the missing elements.
+    fn validate(&self, elems: &Vec<BigUint>) -> Result<Vec<usize>, ()>;
 }
 
 #[cfg(test)]
@@ -57,6 +35,7 @@ mod tests {
     use rand;
     use rand::Rng;
     use num_bigint::{BigUint, ToBigUint};
+    use std::collections::HashSet;
     use super::*;
 
     const MALICIOUS_ELEM: u128 = u128::max_value();
@@ -75,8 +54,13 @@ mod tests {
             }
         }).collect();
         // indexes may be repeated but it's close enough
-        let dropped_is: Vec<usize> = (0..num_dropped)
-            .map(|_| rng.gen_range(0..num_logged)).collect();
+        let dropped_is = {
+            let mut set = HashSet::new();
+            while set.len() < num_dropped {
+                set.insert(rng.gen_range(0..num_logged));
+            }
+            set
+        };
         let malicious_i: usize = rng.gen_range(0..num_logged);
         for i in 0..elems.len() {
             if malicious && malicious_i == i {
@@ -85,8 +69,11 @@ mod tests {
                 accumulator.process(&elems[i]);
             }
         }
-        let valid = accumulator.validate(&elems);
-        assert_eq!(valid, !malicious);
+        let result = accumulator.validate(&elems);
+        assert_eq!(result.is_ok(), !malicious);
+        if !malicious {
+            assert_eq!(result.unwrap().len(), num_dropped);
+        }
     }
 
     #[test]

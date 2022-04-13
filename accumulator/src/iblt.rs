@@ -110,16 +110,16 @@ impl Accumulator for IBLTAccumulator {
     }
 
     #[cfg(feature = "disable_validation")]
-    fn validate(&self, _elems: &Vec<BigUint>) -> bool {
+    fn validate(&self, _elems: &Vec<BigUint>) -> Result<Vec<usize>, ()> {
         panic!("validation not enabled")
     }
 
     #[cfg(not(feature = "disable_validation"))]
-    fn validate(&self, elems: &Vec<BigUint>) -> bool {
+    fn validate(&self, elems: &Vec<BigUint>) -> Result<Vec<usize>, ()> {
         let t1 = Instant::now();
         if elems.len() < self.total() {
             warn!("more elements received than logged");
-            return false;
+            return Err(());
         }
 
         // If no elements are missing, just recalculate the digest.
@@ -129,7 +129,11 @@ impl Accumulator for IBLTAccumulator {
             for elem in elems {
                 digest.add(elem);
             }
-            return digest.equals(&self.digest);
+            return if digest.equals(&self.digest) {
+                Ok(vec![])
+            } else {
+                Err(())
+            };
         }
 
         let mut iblt = self.iblt.empty_clone();
@@ -155,14 +159,14 @@ impl Accumulator for IBLTAccumulator {
             let difference_data =
                 (Wrapping(processed_data) - Wrapping(received_data)).0;
             if difference_count == 0 && !difference_data.is_zero() {
-                return false;
+                return Err(());
             }
             iblt.data_mut()[i] = difference_data;
         }
         // Sanity check the difference IBLT due to wraparound.
         let var = n_dropped != (iblt_sum / iblt.num_hashes()) as usize;
         if n_dropped <= (0xffff / iblt.num_hashes()) as _ && var {
-            return false;
+            return Err(());
         } else if var {
             panic!("wrapped around even in the difference iblt, \
                 select a bigger threshold. {} != {}", n_dropped, iblt_sum);
@@ -186,14 +190,17 @@ impl Accumulator for IBLTAccumulator {
         // entries. This means solving an ILP is unnecessary but we still
         // sanity check that the digest matches.
         if removed.len() == n_dropped {
+            let mut dropped_is = vec![];
             let mut digest = Digest::new();
-            for elem in elems {
+            for (i, elem) in elems.iter().enumerate() {
                 if !removed.remove(&bloom_sd::elem_to_u32(&elem)) {
                     digest.add(elem);
+                } else {
+                    dropped_is.push(i);
                 }
             }
             assert!(digest.equals(&self.digest));
-            return true;
+            return Ok(dropped_is);
         }
 
         // Then there are still some remaining candidate dropped elements,
@@ -249,25 +256,32 @@ impl Accumulator for IBLTAccumulator {
             // * `removed` - the djb hash of elems that were definitely dropped
             // * `dropped` - the indexes of the elems the ILP believes were
             //    dropped in the `elems_i` vec.
-            let dropped_is = dropped
+            let dropped_is_set = dropped
                 .into_iter()
                 .map(|dropped_i| elems_i[dropped_i])
                 .collect::<HashSet<_>>();
             let mut digest = Digest::new();
+            let mut dropped_is = vec![];
             for i in 0..elems.len() {
-                if dropped_is.contains(&i) {
+                if dropped_is_set.contains(&i) {
+                    dropped_is.push(i);
                     continue;
                 }
                 let elem_u32 = bloom_sd::elem_to_u32(&elems[i]);
                 if removed.remove(&elem_u32) {
+                    dropped_is.push(i);
                     continue;
                 }
                 digest.add(&elems[i]);
             }
-            digest.equals(&self.digest)
+            if digest.equals(&self.digest) {
+                Ok(dropped_is)
+            } else {
+                Err(())
+            }
         } else {
             warn!("ILP solving error: {}", err);
-            false
+            Err(())
         }
     }
 }

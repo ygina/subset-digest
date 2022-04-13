@@ -79,12 +79,15 @@ fn main() {
         g.num_logged - g.num_dropped, t2 - t1);
 
     // Validate the log against the accumulator.
-    let valid = accumulator.validate(&g.log);
+    let result = accumulator.validate(&g.log);
     let t3 = Instant::now();
     info!("validation took {:?}", t3 - t2);
-    if valid == !malicious {
-        info!("validation is correct ({})", valid);
+    if result.is_ok() == !malicious {
+        info!("validation is correct ({})", result.is_ok());
     } else {
         error!("validation failed, expected {}", !malicious);
+    }
+    if let Ok(dropped_is) = result {
+        debug!("dropped {:?}", dropped_is);
     }
 }

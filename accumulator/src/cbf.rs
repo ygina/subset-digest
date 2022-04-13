@@ -1,5 +1,5 @@
 #[cfg(not(feature = "disable_validation"))]
-use std::collections::HashMap;
+use std::collections::HashSet;
 #[cfg(not(feature = "disable_validation"))]
 use std::time::Instant;
 
@@ -85,16 +85,16 @@ impl Accumulator for CBFAccumulator {
     }
 
     #[cfg(feature = "disable_validation")]
-    fn validate(&self, _elems: &Vec<BigUint>) -> bool {
+    fn validate(&self, _elems: &Vec<BigUint>) -> Result<Vec<usize>, ()> {
         panic!("validation not enabled")
     }
 
     #[cfg(not(feature = "disable_validation"))]
-    fn validate(&self, elems: &Vec<BigUint>) -> bool {
+    fn validate(&self, elems: &Vec<BigUint>) -> Result<Vec<usize>, ()> {
         let t1 = Instant::now();
         if elems.len() < self.total() {
             warn!("more elements received than logged");
-            return false;
+            return Err(());
         }
 
         // If no elements are missing, just recalculate the digest.
@@ -104,7 +104,11 @@ impl Accumulator for CBFAccumulator {
             for elem in elems {
                 digest.add(elem);
             }
-            return digest.equals(&self.digest);
+            return if digest.equals(&self.digest) {
+                Ok(vec![])
+            } else {
+                Err(())
+            };
         }
 
         // Calculate the difference CBF.
@@ -118,7 +122,7 @@ impl Accumulator for CBFAccumulator {
             // TODO: handle counter overflows i.e. if the Bloom filter
             // stores the count modulo some number instead of the exact count
             if processed_count < received_count {
-                return false;
+                return Err(());
             }
             cbf.counters_mut().set(i, processed_count - received_count)
         }
@@ -173,16 +177,27 @@ impl Accumulator for CBFAccumulator {
         let t4 = Instant::now();
         debug!("solved ILP: {:?}", t4 - t3);
         if err == 0 {
-            let mut dropped_count: HashMap<BigUint, usize> = HashMap::new();
-            for dropped_i in dropped {
-                let elem = &elems[elems_i[dropped_i]];
-                let count = dropped_count.entry(elem.clone()).or_insert(0);
-                *count += 1;
+            let dropped_is_set = dropped
+                .into_iter()
+                .map(|dropped_i| elems_i[dropped_i])
+                .collect::<HashSet<_>>();
+            let mut digest = Digest::new();
+            let mut dropped_is = vec![];
+            for i in 0..elems.len() {
+                if dropped_is_set.contains(&i) {
+                    dropped_is.push(i);
+                    continue;
+                }
+                digest.add(&elems[i]);
             }
-            crate::check_digest(elems, dropped_count, &self.digest)
+            if digest.equals(&self.digest) {
+                Ok(dropped_is)
+            } else {
+                Err(())
+            }
         } else {
             warn!("ILP solving error: {}", err);
-            false
+            Err(())
         }
     }
 }
