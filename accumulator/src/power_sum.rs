@@ -224,6 +224,16 @@ impl PowerSumAccumulator {
     }
 }
 
+#[link(name = "psum", kind = "dylib")]
+extern "C" {
+    pub(crate) fn c_power_sums(
+        psums: *mut u32,
+        n_psums: usize,
+        elem: u32,
+        prime: u32,
+    );
+}
+
 impl Accumulator for PowerSumAccumulator {
     fn to_bytes(&self) -> Vec<u8> {
         bincode::serialize(self).unwrap()
@@ -231,11 +241,14 @@ impl Accumulator for PowerSumAccumulator {
 
     fn process(&mut self, elem: &[u8]) {
         self.digest.add(elem);
-        let mut value: u32 = 1;
         let elem_u32 = bloom_sd::elem_to_u32(elem) & DJB_MASK;
-        for i in 0..self.power_sums.len() {
-            value = mul_and_mod(value, elem_u32);
-            self.power_sums[i] = add_and_mod(self.power_sums[i], value);
+        unsafe {
+            c_power_sums(
+                self.power_sums.as_mut_ptr(),
+                self.power_sums.len(),
+                elem_u32,
+                LARGE_PRIME_U32,
+            );
         }
     }
 
