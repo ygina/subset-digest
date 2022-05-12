@@ -155,6 +155,28 @@ impl InvBloomLookupTable {
         min > 0
     }
 
+    // TODO[MASOT]: wrapping, overflow
+    pub fn bucket_sums(&self, items: &Vec<Vec<u8>>) -> Vec<u32> {
+        // GEFGW
+        let mut bucket_sums = vec![];
+        for elem in items {
+            let item_u32 = elem_to_u32(elem);
+            if !self.contains(&elem) { continue; }
+            let offset = bucket_sums.len();
+            for _ in 0..self.num_entries {
+                bucket_sums.push(0);
+            }
+            for h in HashIter::from(item_u32,
+                                    self.num_hashes,
+                                    &self.hash_builder_one,
+                                    &self.hash_builder_two) {
+                let idx = (h % self.num_entries) as usize;
+                bucket_sums[offset + idx] += item_u32;
+            }
+        }
+        bucket_sums
+    }
+
     /// Removes an item, panics if the item does not exist.
     pub fn remove(&mut self, item: &[u8]) {
         let item_u32 = elem_to_u32(item);

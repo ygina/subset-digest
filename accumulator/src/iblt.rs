@@ -21,9 +21,12 @@ extern "C" {
     fn solve_ilp_glpk(
         n_buckets: usize,
         iblt: *const usize,
+        sums: *const u32,
+        modulus: u64,
         n_hashes: usize,
         n_packets: usize,
         pkt_hashes: *const u32,
+        pkt_bucket_sums: *const u32,
         n_dropped: usize,
         dropped: *mut usize,
     ) -> i32;
@@ -207,9 +210,14 @@ fn solve_ilp_for_iblt(
         })
         .map(|hash| hash as u32)
         .collect();
+    let pkt_bucket_sums: Vec<u32> = iblt.bucket_sums(&elems);
     let counters: Vec<usize> = (0..(iblt.num_entries() as usize))
         .map(|i| iblt.counters().get(i))
         .map(|count| count.try_into().unwrap())
+        .collect();
+    let sums: Vec<u32> = (0..(iblt.num_entries() as usize))
+        .map(|i| *iblt.data().get(i).unwrap())
+        .map(|data| data.try_into().unwrap())
         .collect();
     assert!(n_dropped_remaining <= elems_i.len());
     debug!("setup system of {} eqs in {} vars (expect sols to sum to {})",
@@ -228,9 +236,12 @@ fn solve_ilp_for_iblt(
         solve_ilp_glpk(
             counters.len(),
             counters.as_ptr(),
+            sums.as_ptr(),
+            (1 as u64) << (32 as u64),
             iblt.num_hashes() as usize,
             elems_i.len(),
             pkt_hashes.as_ptr(),
+            pkt_bucket_sums.as_ptr(), // should be an array sized n_packets x n_buckets
             n_dropped_remaining,
             dropped.as_mut_ptr(),
         )

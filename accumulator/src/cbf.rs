@@ -14,10 +14,13 @@ use digest::Digest;
 extern "C" {
     fn solve_ilp_glpk(
         n_buckets: usize,
-        cbf: *const usize,
+        iblt: *const usize,
+        sums: *const u32,
+        modulus: u64,
         n_hashes: usize,
         n_packets: usize,
         pkt_hashes: *const u32,
+        pkt_bucket_sums: *const u32,
         n_dropped: usize,
         dropped: *mut usize,
     ) -> i32;
@@ -139,10 +142,12 @@ impl Accumulator for CBFAccumulator {
             })
             .map(|hash| hash as u32)
             .collect();
+        let pkt_bucket_sums: Vec<u32> = vec![0; elems_i.len() * cbf.num_entries() as usize];
         let counters: Vec<usize> = (0..(cbf.num_entries() as usize))
             .map(|i| cbf.counters().get(i))
             .map(|count| count.try_into().unwrap())
             .collect();
+        let sums: Vec<u32> = vec![0; cbf.num_entries() as usize];
         let t3 = Instant::now();
         info!("setup system of {} eqs in {} vars (expect {} solutions, {}): {:?}",
             elems_i.len(),
@@ -163,9 +168,12 @@ impl Accumulator for CBFAccumulator {
             solve_ilp_glpk(
                 counters.len(),
                 counters.as_ptr(),
+                sums.as_ptr(),
+                1,
                 cbf.num_hashes() as usize,
                 elems_i.len(),
                 pkt_hashes.as_ptr(),
+                pkt_bucket_sums.as_ptr(),
                 n_dropped,
                 dropped.as_mut_ptr(),
             )
