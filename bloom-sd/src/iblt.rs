@@ -187,7 +187,28 @@ impl<T> InvBloomLookupTable<T> {
         min > 0
     }
 
-    pub fn remove(&mut self, item: Data) {
+    // TODO[MASOT]: wrapping, overflow
+    pub fn bucket_sums(&self, items: &Vec<Data>) -> Vec<u32> {
+        // GEFGW
+        let mut bucket_sums = vec![];
+        for &item in items {
+            if !self.contains(item) { continue; }
+            let offset = bucket_sums.len();
+            for _ in 0..self.num_entries {
+                bucket_sums.push(0);
+            }
+            for h in HashIter::from(item,
+                                    self.num_hashes,
+                                    &self.hash_builder_one,
+                                    &self.hash_builder_two) {
+                let idx = (h % self.num_entries) as usize;
+                bucket_sums[offset + idx] += item;
+            }
+        }
+        bucket_sums
+    }
+
+    fn remove(&mut self, item: Data) {
         for h in HashIter::from(item,
                             self.num_hashes,
                             &self.hash_builder_one,
