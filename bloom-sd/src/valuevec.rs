@@ -16,7 +16,20 @@
 //! https://docs.rs/bloom/0.3.2/src/bloom/valuevec.rs.html
 use bit_vec::BitVec;
 use serde::{Serialize, Deserialize};
-use crate::BitVecDef;
+
+#[derive(Serialize, Deserialize)]
+#[serde(remote = "BitVec")]
+struct BitVecDef {
+    #[serde(getter = "BitVec::to_bytes")]
+    bytes: Vec<u8>,
+}
+
+// Provide a conversion to construct the remote type.
+impl From<BitVecDef> for BitVec {
+    fn from(def: BitVecDef) -> BitVec {
+        BitVec::from_bytes(&def.bytes)
+    }
+}
 
 /// A ValueVec is a bit vector that holds fixed sized unsigned integer
 /// values.

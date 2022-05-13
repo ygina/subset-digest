@@ -1,17 +1,26 @@
 use std::collections::HashSet;
-use std::hash::Hasher;
 use std::num::Wrapping;
 
 use rand;
 use serde::{Serialize, Deserialize};
-use djb_hash::{HasherU32, x33a_u32::*};
 use siphasher::sip128::SipHasher13;
 
 use crate::valuevec::ValueVec;
-use crate::hashing::HashIter;
-use crate::SipHasher13Def;
+use crate::hashing::*;
 
-pub const DJB_HASH_SIZE: usize = 32;
+#[derive(Serialize, Deserialize)]
+#[serde(remote = "SipHasher13")]
+struct SipHasher13Def {
+    #[serde(getter = "SipHasher13::keys")]
+    keys: (u64, u64),
+}
+
+// Provide a conversion to construct the remote type.
+impl From<SipHasher13Def> for SipHasher13 {
+    fn from(def: SipHasher13Def) -> SipHasher13 {
+        SipHasher13::new_with_keys(def.keys.0, def.keys.1)
+    }
+}
 
 #[derive(Serialize, Deserialize)]
 pub struct InvBloomLookupTable {
@@ -25,13 +34,6 @@ pub struct InvBloomLookupTable {
     hash_builder_one: SipHasher13,
     #[serde(with = "SipHasher13Def")]
     hash_builder_two: SipHasher13,
-}
-
-/// Maps an element in the lookup table to a u32.
-pub fn elem_to_u32(elem: &[u8]) -> u32 {
-    let mut hasher = X33aU32::new();
-    hasher.write(&elem);
-    hasher.finish_u32()
 }
 
 impl InvBloomLookupTable {
