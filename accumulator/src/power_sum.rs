@@ -422,7 +422,7 @@ impl Accumulator for PowerSumAccumulator {
                         dropped += dropped_count;
                         continue;
                     }
-                    warn!("{} elems for {} slots", elems.len(), dropped_count);
+                    debug!("{} elems for {} slots", elems.len(), dropped_count);
                     // Narrow down the combinations we need to try.
                     let mut map = HashMap::new();
                     for elem in elems {
