@@ -2,11 +2,8 @@ use std::collections::HashSet;
 use rand::{self, SeedableRng, Rng, RngCore};
 use rand_chacha::ChaCha12Rng;
 
-const NBYTES: usize = 16;
-pub const MALICIOUS_ELEM: [u8; NBYTES] = [0; NBYTES];
-
-fn gen_elem(rng: &mut Box<dyn RngCore>) -> Vec<u8> {
-    (0..NBYTES).map(|_| rng.gen::<u8>()).collect()
+fn gen_elem(data_size: usize, rng: &mut Box<dyn RngCore>) -> Vec<u8> {
+    (0..data_size).map(|_| rng.gen::<u8>()).collect()
 }
 
 pub struct SeedGenerator {
@@ -32,12 +29,14 @@ pub trait LoadGeneratorInner {
 }
 
 pub struct LoadGeneratorProb {
-    /// The logged packets. All elements are in the range [0, MALICIOUS_ELEM).
+    /// The logged packets. All elements have the same number of bytes.
     log: Vec<Vec<u8>>,
+    /// Number of bytes in each element.
+    data_size: usize,
     /// Probability that a logged packet is dropped.
     p_dropped: f32,
     /// The index of the malicious packet, if the router is malicious
-    /// (MALICIOUS_ELEM is sent in place of the packet logged at this index).
+    /// (An all-0 packet is sent in place of the packet logged at this index).
     malicious_i: Option<usize>,
 
     /// The number of logged elements.
@@ -51,12 +50,14 @@ pub struct LoadGeneratorProb {
 }
 
 pub struct LoadGeneratorExact {
-    /// The logged packets. All elements are in the range [0, MALICIOUS_ELEM).
+    /// The logged packets. All elements have the same number of bytes.
     log: Vec<Vec<u8>>,
+    /// Number of bytes in each element.
+    data_size: usize,
     /// Indexes of the packets that are dropped.
     dropped_is: HashSet<usize>,
     /// The index of the malicious packet, if the router is malicious
-    /// (MALICIOUS_ELEM is sent in place of the packet logged at this index).
+    /// (An all-0 packet is sent in place of the packet logged at this index).
     malicious_i: Option<usize>,
 
     /// The number of logged elements.
@@ -73,24 +74,26 @@ impl LoadGeneratorProb {
     /// The router logs `num_logged` packets, where `p_dropped` is the
     /// proportion of packets that are dropped en route to the ISP.
     /// If the router is `malicious`, it will send a single packet with
-    /// MALICIOUS_ELEM as the value, instead of the value that is logged.
+    /// all zeros as the value, instead of the value that is logged.
     /// The index of this packet is randomly chosen, and will always be
     /// sent even if p_dropped is 1. The iterator of the load generator
     /// will generate all packets the ISP actually receives.
     pub fn new(
         seed: Option<u64>,
+        data_size: usize,
         num_logged: usize,
         p_dropped: f32,
         malicious: bool,
     ) -> Self {
+        let malicious_elem = vec![0; data_size];
         let mut rng: Box<dyn RngCore> = if let Some(seed) = seed {
             Box::new(ChaCha12Rng::seed_from_u64(seed))
         } else {
             Box::new(rand::thread_rng())
         };
         let log: Vec<Vec<u8>> = (0..num_logged).map(|_| loop {
-            let elem = gen_elem(&mut rng);
-            if elem != MALICIOUS_ELEM {
+            let elem = gen_elem(data_size, &mut rng);
+            if elem != malicious_elem {
                 break elem;
             }
         }).collect();
@@ -102,6 +105,7 @@ impl LoadGeneratorProb {
 
         Self {
             log,
+            data_size,
             p_dropped,
             malicious_i,
             num_logged,
@@ -132,24 +136,26 @@ impl LoadGeneratorExact {
     /// The router logs `num_logged` packets, where `p_dropped` is the
     /// proportion of packets that are dropped en route to the ISP.
     /// If the router is `malicious`, it will send a single packet with
-    /// MALICIOUS_ELEM as the value, instead of the value that is logged.
+    /// all zeros as the value, instead of the value that is logged.
     /// The index of this packet is randomly chosen, and will always be
     /// sent even if p_dropped is 1. The iterator of the load generator
     /// will generate all packets the ISP actually receives.
     pub fn new(
         seed: Option<u64>,
+        data_size: usize,
         num_logged: usize,
         n_dropped: usize,
         malicious: bool,
     ) -> Self {
+        let malicious_elem = vec![0; data_size];
         let mut rng: Box<dyn RngCore> = if let Some(seed) = seed {
             Box::new(ChaCha12Rng::seed_from_u64(seed))
         } else {
             Box::new(rand::thread_rng())
         };
         let log: Vec<Vec<u8>> = (0..num_logged).map(|_| loop {
-            let elem = gen_elem(&mut rng);
-            if elem != MALICIOUS_ELEM {
+            let elem = gen_elem(data_size, &mut rng);
+            if elem != malicious_elem {
                 break elem;
             }
         }).collect();
@@ -171,6 +177,7 @@ impl LoadGeneratorExact {
 
         Self {
             log,
+            data_size,
             dropped_is,
             malicious_i,
             num_logged,
@@ -206,10 +213,10 @@ impl Iterator for LoadGeneratorProb {
             }
             // Update the index
             self.index += 1;
-            // Send MALICIOUS_ELEM if we are on the malicious index
+            // Send all zero packet if we are on the malicious index
             if let Some(malicious_i) = self.malicious_i {
                 if malicious_i == self.index - 1 {
-                    return Some(MALICIOUS_ELEM.to_vec());
+                    return Some(vec![0; self.data_size]);
                 }
             }
             // Continue until the packet is not dropped
@@ -235,10 +242,10 @@ impl Iterator for LoadGeneratorExact {
             }
             // Update the index
             self.index += 1;
-            // Send MALICIOUS_ELEM if we are on the malicious index
+            // Send all zero packet if we are on the malicious index
             if let Some(malicious_i) = self.malicious_i {
                 if malicious_i == self.index - 1 {
-                    return Some(MALICIOUS_ELEM.to_vec());
+                    return Some(vec![0; self.data_size]);
                 }
             }
             // Continue until the packet is not dropped
@@ -262,10 +269,12 @@ mod tests {
 
     const SEED: Option<u64> = Some(1234);
     const NUM_LOGGED: usize = 10000;
+    const DATA_SIZE: usize = 16;
 
     #[test]
     fn no_elements_are_dropped() {
-        let mut g = LoadGeneratorProb::new(SEED, NUM_LOGGED, 0.0, false);
+        let mut g = LoadGeneratorProb::new(
+            SEED, DATA_SIZE, NUM_LOGGED, 0.0, false);
         let mut processed = vec![];
         while let Some(elem) = g.next() {
             processed.push(elem);
@@ -278,7 +287,8 @@ mod tests {
 
     #[test]
     fn all_elements_are_dropped() {
-        let mut g = LoadGeneratorProb::new(SEED, NUM_LOGGED, 1.0, false);
+        let mut g = LoadGeneratorProb::new(
+            SEED, DATA_SIZE, NUM_LOGGED, 1.0, false);
         let mut processed = vec![];
         while let Some(elem) = g.next() {
             processed.push(elem);
@@ -291,7 +301,8 @@ mod tests {
 
     #[test]
     fn some_elements_are_dropped() {
-        let mut g = LoadGeneratorProb::new(SEED, NUM_LOGGED, 0.5, false);
+        let mut g = LoadGeneratorProb::new(
+            SEED, DATA_SIZE, NUM_LOGGED, 0.5, false);
         let mut processed = vec![];
         while let Some(elem) = g.next() {
             processed.push(elem);
@@ -305,7 +316,8 @@ mod tests {
 
     #[test]
     fn malicious_element_is_generated_but_not_logged() {
-        let mut g = LoadGeneratorProb::new(SEED, NUM_LOGGED, 0.5, true);
+        let mut g = LoadGeneratorProb::new(
+            SEED, DATA_SIZE, NUM_LOGGED, 0.5, true);
         let mut processed = vec![];
         while let Some(elem) = g.next() {
             processed.push(elem);
@@ -314,13 +326,14 @@ mod tests {
         assert_eq!(g.num_logged, NUM_LOGGED);
         assert!(g.num_dropped > 0); //with high probability
         assert_eq!(processed.len(), g.num_logged - g.num_dropped);
-        assert!(!g.log.contains(&MALICIOUS_ELEM.to_vec()));
-        assert!(processed.contains(&MALICIOUS_ELEM.to_vec()));
+        assert!(!g.log.contains(&vec![0; DATA_SIZE]));
+        assert!(processed.contains(&vec![0; DATA_SIZE]));
     }
 
     #[test]
     fn malicious_element_is_not_dropped() {
-        let mut g = LoadGeneratorProb::new(SEED, NUM_LOGGED, 1.0, true);
+        let mut g = LoadGeneratorProb::new(
+            SEED, DATA_SIZE, NUM_LOGGED, 1.0, true);
         let mut processed = vec![];
         while let Some(elem) = g.next() {
             processed.push(elem);
@@ -331,9 +344,12 @@ mod tests {
 
     #[test]
     fn seed_load_generator() {
-        let mut g1 = LoadGeneratorProb::new(SEED, NUM_LOGGED, 0.0, false);
-        let mut g2 = LoadGeneratorProb::new(SEED, NUM_LOGGED, 0.0, false);
-        let mut g3 = LoadGeneratorProb::new(None, NUM_LOGGED, 0.0, false);
+        let mut g1 = LoadGeneratorProb::new(
+            SEED, DATA_SIZE, NUM_LOGGED, 0.0, false);
+        let mut g2 = LoadGeneratorProb::new(
+            SEED, DATA_SIZE, NUM_LOGGED, 0.0, false);
+        let mut g3 = LoadGeneratorProb::new(
+            None, DATA_SIZE, NUM_LOGGED, 0.0, false);
         let (mut p1, mut p2, mut p3) = (vec![], vec![], vec![]);
         while let Some(e) = g1.next() {
             p1.push(e);
@@ -364,7 +380,8 @@ mod tests {
 
     #[test]
     fn no_elements_are_dropped_exact() {
-        let mut g = LoadGeneratorExact::new(SEED, NUM_LOGGED, 0, false);
+        let mut g = LoadGeneratorExact::new(
+            SEED, DATA_SIZE, NUM_LOGGED, 0, false);
         let mut processed = vec![];
         while let Some(elem) = g.next() {
             processed.push(elem);
@@ -377,8 +394,8 @@ mod tests {
 
     #[test]
     fn all_elements_are_dropped_exact() {
-        let mut g = LoadGeneratorExact::new(SEED, NUM_LOGGED, NUM_LOGGED,
-           false);
+        let mut g = LoadGeneratorExact::new(
+            SEED, DATA_SIZE, NUM_LOGGED, NUM_LOGGED, false);
         let mut processed = vec![];
         while let Some(elem) = g.next() {
             processed.push(elem);
@@ -391,7 +408,8 @@ mod tests {
 
     #[test]
     fn some_elements_are_dropped_exact() {
-        let mut g = LoadGeneratorExact::new(SEED, NUM_LOGGED, 100, false);
+        let mut g = LoadGeneratorExact::new(
+            SEED, DATA_SIZE, NUM_LOGGED, 100, false);
         let mut processed = vec![];
         while let Some(elem) = g.next() {
             processed.push(elem);
@@ -404,7 +422,8 @@ mod tests {
 
     #[test]
     fn malicious_element_is_generated_but_not_logged_exact() {
-        let mut g = LoadGeneratorExact::new(SEED, NUM_LOGGED, 100, true);
+        let mut g = LoadGeneratorExact::new(
+            SEED, DATA_SIZE, NUM_LOGGED, 100, true);
         let mut processed = vec![];
         while let Some(elem) = g.next() {
             processed.push(elem);
@@ -412,13 +431,14 @@ mod tests {
         assert_eq!(g.log.len(), g.num_logged);
         assert_eq!(g.num_logged, NUM_LOGGED);
         assert_eq!(g.num_dropped, 100);
-        assert!(!g.log.contains(&MALICIOUS_ELEM.to_vec()));
-        assert!(processed.contains(&MALICIOUS_ELEM.to_vec()));
+        assert!(!g.log.contains(&vec![0; DATA_SIZE]));
+        assert!(processed.contains(&vec![0; DATA_SIZE]));
     }
 
     #[test]
     fn malicious_element_is_not_dropped_exact() {
-        let mut g = LoadGeneratorExact::new(SEED, 101, 100, true);
+        let mut g = LoadGeneratorExact::new(
+            SEED, DATA_SIZE, 101, 100, true);
         let mut processed = vec![];
         while let Some(elem) = g.next() {
             processed.push(elem);
@@ -429,9 +449,12 @@ mod tests {
 
     #[test]
     fn seed_load_generator_exact() {
-        let mut g1 = LoadGeneratorExact::new(SEED, NUM_LOGGED, 0, false);
-        let mut g2 = LoadGeneratorExact::new(SEED, NUM_LOGGED, 0, false);
-        let mut g3 = LoadGeneratorExact::new(None, NUM_LOGGED, 0, false);
+        let mut g1 = LoadGeneratorExact::new(
+            SEED, DATA_SIZE, NUM_LOGGED, 0, false);
+        let mut g2 = LoadGeneratorExact::new(
+            SEED, DATA_SIZE, NUM_LOGGED, 0, false);
+        let mut g3 = LoadGeneratorExact::new(
+            None, DATA_SIZE, NUM_LOGGED, 0, false);
         let (mut p1, mut p2, mut p3) = (vec![], vec![], vec![]);
         while let Some(e) = g1.next() {
             p1.push(e);

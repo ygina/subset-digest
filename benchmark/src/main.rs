@@ -42,6 +42,7 @@ fn build_accumulator<G: Iterator<Item = Vec<u8>>>(
 /// is provided, and defaults to `p_dropped` if both are provided.
 fn build_loadgen(
     seed: Option<u64>,
+    data_size: usize,
     num_logged: usize,
     p_dropped: Option<f32>,
     n_dropped: Option<usize>,
@@ -49,10 +50,11 @@ fn build_loadgen(
 ) -> Box<dyn LoadGenerator<Item = Vec<u8>>> {
     assert!(p_dropped.is_some() || n_dropped.is_some());
     if let Some(p_dropped) = p_dropped {
-        Box::new(LoadGeneratorProb::new(seed, num_logged, p_dropped, malicious))
+        Box::new(LoadGeneratorProb::new(seed, data_size, num_logged, p_dropped,
+           malicious))
     } else {
         let n_dropped = n_dropped.unwrap();
-        Box::new(LoadGeneratorExact::new(seed, num_logged, n_dropped,
+        Box::new(LoadGeneratorExact::new(seed, data_size, num_logged, n_dropped,
            malicious))
     }
 }
@@ -106,6 +108,12 @@ fn main() {
             .takes_value(true)
             .required_unless_present("p-dropped")
             .default_value("20"))
+        .arg(Arg::new("data-size")
+            .help("Number of bytes in input data elements. Each data element \
+                is randomly-generated. There may be duplicate elements.")
+            .long("data-size")
+            .takes_value(true)
+            .default_value("16"))
         .arg(Arg::new("debug-level")
             .help("Debug level.")
             .long("debug-level")
@@ -170,6 +178,7 @@ fn main() {
     env_logger::builder().filter_level(debug_level).init();
     let trials: usize = matches.value_of_t("trials").unwrap();
     let num_logged: usize = matches.value_of_t("num-logged").unwrap();
+    let data_size: usize = matches.value_of_t("data-size").unwrap();
     let p_dropped: Option<f32> = matches.value_of("p-dropped")
         .map(|p_dropped| p_dropped.parse().unwrap());
     let n_dropped: Option<usize> = matches.value_of("n-dropped")
@@ -190,7 +199,8 @@ fn main() {
     for i in 0..trials {
         let seed = seed_generator.next();
         let mut g: Box<dyn LoadGenerator<Item = Vec<u8>>> =
-            build_loadgen(seed, num_logged, p_dropped, n_dropped, malicious);
+            build_loadgen(seed, data_size, num_logged, p_dropped, n_dropped,
+               malicious);
         let t1 = Instant::now();
         let acc = build_accumulator(&mut g, accumulator_ty, threshold,
             iblt_params.clone(), seed.clone());
