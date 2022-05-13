@@ -39,33 +39,43 @@ pub struct InvBloomLookupTable {
 impl InvBloomLookupTable {
     /// Creates a InvBloomLookupTable that uses `bits_per_entry` bits for each
     /// entry, `num_entries` number of entries, and `num_hashes` number of hash
-    /// functions.
+    /// functions. The data_size is the number of bits in the data field,
+    /// where the value can be 8, 16, or 32.
     ///
     /// The recommended parameters are 10x entries the number of expected items,
     /// and 2 hash functions. These were experimentally found to provide the
     /// best tradeoff between space and false positive rates (stating the
     /// router is malicious when it is not).
     pub fn new(
+        data_size: u32,
         bits_per_entry: usize,
         num_entries: usize,
         num_hashes: u32,
     ) -> Self {
         use rand::RngCore;
         let seed = rand::rngs::OsRng.next_u64();
-        Self::new_with_seed(seed, bits_per_entry, num_entries, num_hashes)
+        Self::new_with_seed(
+            seed,
+            data_size,
+            bits_per_entry,
+            num_entries,
+            num_hashes,
+        )
     }
 
     /// Like `new()`, but seeds the hash builders.
     pub fn new_with_seed(
         seed: u64,
+        data_size: u32,
         bits_per_entry: usize,
         num_entries: usize,
         num_hashes: u32,
     ) -> Self {
+        assert!(data_size == 32);
         use rand::{SeedableRng, rngs::SmallRng, Rng};
         let mut rng = SmallRng::seed_from_u64(seed);
         InvBloomLookupTable {
-            data: ValueVec::new(DJB_HASH_SIZE, num_entries),
+            data: ValueVec::new(data_size as usize, num_entries),
             counters: ValueVec::new(bits_per_entry, num_entries),
             num_entries: num_entries as u64,
             num_hashes,
@@ -118,16 +128,12 @@ impl InvBloomLookupTable {
     }
 
     pub fn equals(&self, other: &Self) -> bool {
-        let a = self.num_entries == other.num_entries;
-        let b = self.num_hashes == other.num_hashes;
-        let c = self.hash_builder_one.keys() == other.hash_builder_one.keys();
-        let d = self.hash_builder_two.keys() == other.hash_builder_two.keys();
-        let e = self.data == other.data;
-        let f = self.counters == other.counters;
-        println!("{} {} {} {} {} {}", a, b, c, d, e, f);
-        println!("{} {}", self.data.bits_per_val, other.data.bits_per_val);
-
-        a && b && c && d && e && f
+        self.num_entries == other.num_entries
+            && self.num_hashes == other.num_hashes
+            && self.hash_builder_one.keys() == other.hash_builder_one.keys()
+            && self.hash_builder_two.keys() == other.hash_builder_two.keys()
+            && self.data == other.data
+            && self.counters == other.counters
     }
 
     /// Inserts an item, returns true if the item was already in the filter
@@ -240,8 +246,10 @@ mod tests {
     use super::*;
     use bincode;
 
+    const DATA_SIZE: u32 = 32;
+
     fn init_iblt() -> InvBloomLookupTable {
-        InvBloomLookupTable::new(8, 100, 2)
+        InvBloomLookupTable::new(DATA_SIZE, 8, 100, 2)
     }
 
     fn vvsum(vec: &ValueVec) -> usize {
@@ -287,9 +295,9 @@ mod tests {
 
     #[test]
     fn test_new_iblt_with_seed() {
-        let iblt1 = InvBloomLookupTable::new_with_seed(111, 8, 100, 2);
-        let iblt2 = InvBloomLookupTable::new_with_seed(222, 8, 100, 2);
-        let iblt3 = InvBloomLookupTable::new_with_seed(111, 8, 100, 2);
+        let iblt1 = InvBloomLookupTable::new_with_seed(111, DATA_SIZE, 8, 100, 2);
+        let iblt2 = InvBloomLookupTable::new_with_seed(222, DATA_SIZE, 8, 100, 2);
+        let iblt3 = InvBloomLookupTable::new_with_seed(111, DATA_SIZE, 8, 100, 2);
         assert!(!iblt1.equals(&iblt2));
         assert!(iblt1.equals(&iblt3));
     }
@@ -348,7 +356,8 @@ mod tests {
 
     #[test]
     fn test_insert_with_counter_overflow() {
-        let mut iblt = InvBloomLookupTable::new(1, 10, 1);  // 1 bit per entry
+        // 1 bit per entry
+        let mut iblt = InvBloomLookupTable::new(DATA_SIZE, 1, 10, 1);
         let elem = 1234_u64.to_be_bytes();
         let elem_u32 = elem_to_u32(&elem);
         let i = iblt.indexes(&elem)[0];
@@ -366,7 +375,7 @@ mod tests {
 
     #[test]
     fn test_insert_with_data_wraparound() {
-        let mut iblt = InvBloomLookupTable::new(2, 10, 1);
+        let mut iblt = InvBloomLookupTable::new(DATA_SIZE, 2, 10, 1);
         let elem = 9983_u32.to_be_bytes();
         let elem_u32 = elem_to_u32(&elem);
         assert_eq!(elem_u32, 2086475114, "DJB hash of 9983 is very big");
@@ -386,7 +395,8 @@ mod tests {
 
     #[test]
     fn test_eliminate_all_elems_without_duplicates() {
-        let mut iblt = InvBloomLookupTable::new_with_seed(111, 8, 10, 2);
+        let mut iblt = InvBloomLookupTable::new_with_seed(
+            111, DATA_SIZE, 8, 10, 2);
         let mut hashes = HashSet::new();
         let n: usize = 6;
         for i in 0..n {
@@ -410,7 +420,8 @@ mod tests {
 
     #[test]
     fn test_eliminate_all_elems_with_duplicates() {
-        let mut iblt = InvBloomLookupTable::new_with_seed(111, 8, 10, 2);
+        let mut iblt = InvBloomLookupTable::new_with_seed(
+            111, DATA_SIZE, 8, 10, 2);
         let mut hashes = HashSet::new();
         let n: usize = 8;
         for i in 0..n {

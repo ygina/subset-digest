@@ -48,6 +48,7 @@ fn get_accumulator(
     reset: bool,
     port: u32,
     ty: &str,
+    data_size: u32,
     iblt_params: Option<Vec<&str>>,
 ) -> Box<dyn Accumulator> {
     let mut buf = Vec::new();
@@ -86,6 +87,7 @@ fn get_accumulator(
         "iblt" => {
             Box::new(IBLTAccumulator::from_bytes(
                 &buf,
+                data_size,
                 iblt_params.as_ref().unwrap()[0].parse().unwrap(),
                 iblt_params.as_ref().unwrap()[2].parse().unwrap(),
             ))
@@ -383,6 +385,15 @@ fn main() {
             .number_of_values(3)
             .required_if_eq("accumulator", "iblt")
             .default_values(&["8", "10", "2"]))
+        .arg(Arg::new("data-size")
+            .help("Size of data field in IBLT, in bits.")
+            .long("data-size")
+            .takes_value(true)
+            .required_if_eq("accumulator", "iblt")
+            .possible_value("8")
+            .possible_value("16")
+            .possible_value("32")
+            .default_value("32"))
         .arg(Arg::new("accumulator")
             .help("")
             .short('a')
@@ -395,14 +406,15 @@ fn main() {
             .required(true))
         .get_matches();
 
-    let port: u32 = matches.value_of("port").unwrap().parse().unwrap();
+    let port: u32 = matches.value_of_t("port").unwrap();
     let filename = matches.value_of("filename").unwrap();
-    let bytes: usize = matches.value_of("bytes").unwrap().parse().unwrap();
+    let bytes: usize = matches.value_of_t("bytes").unwrap();
     let accumulator_type = matches.value_of("accumulator").unwrap();
     let reset = matches.is_present("reset");
     let accumulator_ssh = matches.values_of("accumulator-ssh").map(|ssh|
        ssh.collect());
     let router_ssh = matches.values_of("router-ssh").map(|ssh| ssh.collect());
+    let data_size: u32 = matches.value_of_t("data-size").unwrap();
     let iblt_params: Option<Vec<&str>> = matches.values_of("iblt-params")
         .map(|params| params.collect());
     let drop: Option<usize> = matches.value_of("drop").map(|num|
@@ -424,6 +436,7 @@ fn main() {
             reset,
             port,
             accumulator_type,
+            data_size,
             iblt_params,
         );
         let t2 = Instant::now();
