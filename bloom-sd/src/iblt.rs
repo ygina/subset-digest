@@ -87,9 +87,10 @@ impl InvBloomLookupTable {
 
     /// Clones the InvBloomLookupTable where all counters are 0.
     pub fn empty_clone(&self) -> Self {
+        let data_size = self.data.bits_per_val();
         let bits_per_entry = self.counters.bits_per_val();
         Self {
-            data: ValueVec::new(DJB_HASH_SIZE, self.num_entries as usize),
+            data: ValueVec::new(data_size, self.num_entries as usize),
             counters: ValueVec::new(bits_per_entry, self.num_entries as usize),
             num_entries: self.num_entries,
             num_hashes: self.num_hashes,
@@ -138,10 +139,9 @@ impl InvBloomLookupTable {
 
     /// Inserts an item, returns true if the item was already in the filter
     /// any number of times.
-    pub fn insert(&mut self, item: &[u8]) -> bool {
+    pub fn insert(&mut self, item: u32) -> bool {
         let mut min = u32::max_value();
-        let item_u32 = elem_to_u32(item);
-        for h in HashIter::from(item_u32,
+        for h in HashIter::from(item,
                                 self.num_hashes,
                                 &self.hash_builder_one,
                                 &self.hash_builder_two) {
@@ -157,15 +157,14 @@ impl InvBloomLookupTable {
                 self.counters.set(idx, 0);
             }
             self.data.set(
-                idx, (Wrapping(self.data.get(idx)) + Wrapping(item_u32)).0);
+                idx, (Wrapping(self.data.get(idx)) + Wrapping(item)).0);
         }
         min > 0
     }
 
     /// Removes an item, panics if the item does not exist.
-    pub fn remove(&mut self, item: &[u8]) {
-        let item_u32 = elem_to_u32(item);
-        self.remove_u32(item_u32);
+    pub fn remove(&mut self, item: u32) {
+        self.remove_u32(item);
     }
 
     fn remove_u32(&mut self, item_u32: u32) {
@@ -188,9 +187,8 @@ impl InvBloomLookupTable {
 
     /// Checks if the item has been inserted into this InvBloomLookupTable.
     /// This function can return false positives, but not false negatives.
-    pub fn contains(&self, item: &[u8]) -> bool {
-        let item_u32 = elem_to_u32(item);
-        for h in HashIter::from(item_u32,
+    pub fn contains(&self, item: u32) -> bool {
+        for h in HashIter::from(item,
                                 self.num_hashes,
                                 &self.hash_builder_one,
                                 &self.hash_builder_two) {
@@ -204,9 +202,8 @@ impl InvBloomLookupTable {
     }
 
     /// Gets the indexes of the item in the vector.
-    pub fn indexes(&self, item: &[u8]) -> Vec<usize> {
-        let item_u32 = elem_to_u32(item);
-        HashIter::from(item_u32,
+    pub fn indexes(&self, item: u32) -> Vec<usize> {
+        HashIter::from(item,
                        self.num_hashes,
                        &self.hash_builder_one,
                        &self.hash_builder_two)
@@ -278,7 +275,7 @@ mod tests {
     #[test]
     fn test_serialization_with_data() {
         let mut iblt1 = init_iblt();
-        iblt1.insert(&1234_u32.to_be_bytes());
+        iblt1.insert(1234);
         let bytes = bincode::serialize(&iblt1).unwrap();
         let iblt2 = bincode::deserialize(&bytes).unwrap();
         assert!(iblt1.equals(&iblt2));
@@ -309,7 +306,7 @@ mod tests {
         assert!(!iblt1.equals(&iblt2), "different random state");
         let iblt3 = iblt1.empty_clone();
         assert!(iblt1.equals(&iblt3), "empty clone duplicates random state");
-        iblt1.insert(&1234_u32.to_be_bytes());
+        iblt1.insert(1234);
         let iblt4 = iblt1.empty_clone();
         assert!(!iblt1.equals(&iblt4), "empty clone removes data");
         assert!(iblt1.equals(&iblt1), "reflexive equality");
@@ -319,19 +316,19 @@ mod tests {
     #[test]
     fn test_insert_without_overflow() {
         let mut iblt = init_iblt();
-        let elem = 1234_u32.to_be_bytes();
-        let indexes = iblt.indexes(&elem);
+        let elem = 1234;
+        let indexes = iblt.indexes(elem);
         for &idx in &indexes {
             assert_eq!(iblt.counters().get(idx), 0);
             assert_eq!(iblt.data().get(idx), 0);
         }
-        assert!(!iblt.insert(&elem), "element did not exist already");
+        assert!(!iblt.insert(elem), "element did not exist already");
         assert_eq!(vvsum(iblt.counters()), 1 * iblt.num_hashes() as usize);
         for &idx in &indexes {
             assert_ne!(iblt.counters().get(idx), 0);
             assert_ne!(iblt.data().get(idx), 0);
         }
-        assert!(iblt.insert(&elem), "added element twice");
+        assert!(iblt.insert(elem), "added element twice");
         assert_eq!(vvsum(iblt.counters()), 2 * iblt.num_hashes() as usize);
         for &idx in &indexes {
             assert_ne!(iblt.counters().get(idx), 0);
@@ -342,79 +339,71 @@ mod tests {
     #[test]
     fn test_empty_clone() {
         let mut iblt1 = init_iblt();
-        iblt1.insert(&1234_u32.to_be_bytes());
-        iblt1.insert(&5678_u32.to_be_bytes());
+        iblt1.insert(1234);
+        iblt1.insert(5678);
         let iblt2 = iblt1.empty_clone();
         assert!(vvsum(iblt1.counters()) > 0);
         assert_eq!(vvsum(iblt2.counters()), 0);
         assert!(data_is_nonzero(iblt1.data()));
         assert_eq!(vvsum(iblt2.data()), 0);
         assert_eq!(
-            iblt1.indexes(&1234_u32.to_be_bytes()),
-            iblt2.indexes(&1234_u32.to_be_bytes()));
+            iblt1.indexes(1234),
+            iblt2.indexes(1234));
     }
 
     #[test]
     fn test_insert_with_counter_overflow() {
         // 1 bit per entry
         let mut iblt = InvBloomLookupTable::new(DATA_SIZE, 1, 10, 1);
-        let elem = 1234_u64.to_be_bytes();
-        let elem_u32 = elem_to_u32(&elem);
-        let i = iblt.indexes(&elem)[0];
+        let elem = 1234;
+        let i = iblt.indexes(elem)[0];
 
         // counters and data are updated
-        iblt.insert(&elem);
+        iblt.insert(elem);
         assert_eq!(iblt.counters().get(i), 1);
-        assert_eq!(iblt.data().get(i), elem_u32);
+        assert_eq!(iblt.data().get(i), elem);
 
         // on overflow, counter is zero but data is nonzero
-        iblt.insert(&elem);
+        iblt.insert(elem);
         assert_eq!(iblt.counters().get(i), 0);
-        assert_eq!(iblt.data().get(i), elem_u32 * 2);
+        assert_eq!(iblt.data().get(i), elem * 2);
     }
 
     #[test]
     fn test_insert_with_data_wraparound() {
         let mut iblt = InvBloomLookupTable::new(DATA_SIZE, 2, 10, 1);
-        let elem = 9983_u32.to_be_bytes();
-        let elem_u32 = elem_to_u32(&elem);
-        assert_eq!(elem_u32, 2086475114, "DJB hash of 9983 is very big");
-        let i = iblt.indexes(&elem)[0];
+        let elem = 2086475114;  // very big element
+        let i = iblt.indexes(elem)[0];
 
         // counters and data are updated
-        iblt.insert(&elem);
+        iblt.insert(elem);
         assert_eq!(iblt.counters().get(i), 1);
-        assert_eq!(iblt.data().get(i), elem_u32);
+        assert_eq!(iblt.data().get(i), elem);
 
         // on overflow, counter is zero but data is nonzero
-        iblt.insert(&elem);
-        iblt.insert(&elem);
+        iblt.insert(elem);
+        iblt.insert(elem);
         assert_eq!(iblt.counters().get(i), 3);
-        assert!(iblt.data().get(i) < elem_u32);
+        assert!(iblt.data().get(i) < elem);
     }
 
     #[test]
     fn test_eliminate_all_elems_without_duplicates() {
         let mut iblt = InvBloomLookupTable::new_with_seed(
             111, DATA_SIZE, 8, 10, 2);
-        let mut hashes = HashSet::new();
         let n: usize = 6;
-        for i in 0..n {
-            let elem = (i as u32).to_be_bytes();
-            iblt.insert(&elem);
-            hashes.insert(elem_to_u32(&elem));
+        for elem in 0..(n as u32) {
+            iblt.insert(elem);
         }
         assert_eq!(vvsum(iblt.counters()), n * (iblt.num_hashes() as usize));
-        assert_eq!(hashes.len(), n, "djb hashes are unique in this test");
 
         // Return the original elements
-        let elems = iblt.eliminate_elems();
+        let mut elems = iblt.eliminate_elems();
         assert_eq!(elems.len(), n);
         assert_eq!(vvsum(iblt.counters()), 0);
         assert_eq!(vvsum(iblt.data()), 0);
-        for i in 0..n {
-            let elem = elem_to_u32(&(i as u32).to_be_bytes());
-            assert!(hashes.remove(&elem));
+        for elem in 0..(n as u32) {
+            assert!(elems.remove(&elem));
         }
     }
 
@@ -422,15 +411,12 @@ mod tests {
     fn test_eliminate_all_elems_with_duplicates() {
         let mut iblt = InvBloomLookupTable::new_with_seed(
             111, DATA_SIZE, 8, 10, 2);
-        let mut hashes = HashSet::new();
-        let n: usize = 8;
-        for i in 0..n {
-            let elem = (i as u32).to_be_bytes();
-            iblt.insert(&elem);
-            hashes.insert(elem_to_u32(&elem));
+        let n: usize = 7;
+        for elem in 1..(n as u32) {
+            iblt.insert(elem);
         }
+        iblt.insert(1);  // duplicate element
         assert_eq!(vvsum(iblt.counters()), n * (iblt.num_hashes() as usize));
-        assert_eq!(hashes.len(), n, "djb hashes are unique in this test");
 
         // Not all elements were eliminated
         let elems = iblt.eliminate_elems();

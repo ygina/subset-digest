@@ -57,7 +57,7 @@ fn calculate_difference_iblt(
 ) -> Result<InvBloomLookupTable, ValidationResult> {
     let mut iblt = received_iblt.empty_clone();
     for elem in logged_elems {
-        iblt.insert(elem);
+        iblt.insert(crate::elem_to_u32(elem));
     }
     let mut iblt_sum = 0;
     let wraparound_mask = (1 << (iblt.counters().bits_per_val() as u32)) - 1;
@@ -126,7 +126,7 @@ fn check_digest_from_removed_set(
     let mut digest = Digest::new();
     let mut collisions_map: HashMap<u32, Vec<&Vec<u8>>> = HashMap::new();
     for elem in elems {
-        let elem_u32 = bloom_sd::elem_to_u32(&elem);
+        let elem_u32 = crate::elem_to_u32(&elem);
         if removed.contains(&elem_u32) {
             collisions_map.entry(elem_u32).or_insert(vec![]).push(elem);
         } else {
@@ -195,11 +195,12 @@ fn solve_ilp_for_iblt(
     let mut elems_i: Vec<usize> = vec![];
     let pkt_hashes: Vec<u32> = elems
         .iter()
+        .map(|elem| crate::elem_to_u32(elem))
         .enumerate()
-        .filter(|(_, elem)| iblt.contains(&elem))
-        .flat_map(|(i, elem)| {
+        .filter(|(_, elem_u32)| iblt.contains(*elem_u32))
+        .flat_map(|(i, elem_u32)| {
             elems_i.push(i);
-            iblt.indexes(&elem)
+            iblt.indexes(elem_u32)
         })
         .map(|hash| hash as u32)
         .collect();
@@ -337,7 +338,7 @@ impl Accumulator for IBLTAccumulator {
 
     fn process(&mut self, elem: &[u8]) {
         self.digest.add(elem);
-        self.iblt.insert(elem);
+        self.iblt.insert(crate::elem_to_u32(elem));
     }
 
     fn process_batch(&mut self, elems: &Vec<Vec<u8>>) {
@@ -521,8 +522,8 @@ mod tests {
         assert_eq!(acc1.iblt.num_entries(), acc2.iblt.num_entries());
         assert_eq!(acc1.iblt.num_hashes(), acc2.iblt.num_hashes());
         assert_eq!(acc1.iblt.seed(), acc2.iblt.seed());
-        let elem = 1234_u32.to_be_bytes();
-        assert_eq!(acc1.iblt.indexes(&elem), acc2.iblt.indexes(&elem));
+        let elem = 1234;
+        assert_eq!(acc1.iblt.indexes(elem), acc2.iblt.indexes(elem));
         assert!(acc1.equals(&acc2));
     }
 
@@ -554,8 +555,8 @@ mod tests {
         assert_eq!(acc1.iblt.num_entries(), acc3.iblt.num_entries());
         assert_eq!(acc1.iblt.num_hashes(), acc3.iblt.num_hashes());
         assert_eq!(acc1.iblt.seed(), acc3.iblt.seed());
-        let elem = 1234_u32.to_be_bytes();
-        assert_eq!(acc1.iblt.indexes(&elem), acc3.iblt.indexes(&elem));
+        let elem = 1234;
+        assert_eq!(acc1.iblt.indexes(elem), acc3.iblt.indexes(elem));
         assert!(acc1.equals(&acc3));
     }
 
@@ -574,7 +575,7 @@ mod tests {
         let mut iblt = InvBloomLookupTable::new_with_seed(
             111, DATA_SIZE, 4, 10, 3);
         for elem in &log {
-            iblt.insert(&elem);
+            iblt.insert(crate::elem_to_u32(&elem));
         }
         let diff = calculate_difference_iblt(n_dropped, &log, &iblt).unwrap();
         assert_eq!(vvsum(diff.counters()), 0);
@@ -595,10 +596,10 @@ mod tests {
         let mut d2 = InvBloomLookupTable::new_with_seed(
             111, DATA_SIZE, bpe, 60, 3);
         for i in 0..n_logged {
-            d1.insert(&log[i]);
+            d1.insert(crate::elem_to_u32(&log[i]));
         }
         for i in 0..(n_logged - n_dropped) {
-            d2.insert(&log[i]);
+            d2.insert(crate::elem_to_u32(&log[i]));
         }
 
         // Calculate the difference.
@@ -651,10 +652,10 @@ mod tests {
         let mut d2 = InvBloomLookupTable::new_with_seed(
             111, DATA_SIZE, 4, 6, 3);
         for i in 0..n_logged {
-            d1.insert(&log[i]);
+            d1.insert(crate::elem_to_u32(&log[i]));
         }
         for i in 0..(n_logged - n_dropped) {
-            d2.insert(&log[i]);
+            d2.insert(crate::elem_to_u32(&log[i]));
         }
         let res = calculate_difference_iblt(n_dropped, &log, &d2);
         assert!(res.is_err());
@@ -677,10 +678,10 @@ mod tests {
         let mut d2 = InvBloomLookupTable::new_with_seed(
             111, DATA_SIZE, 4, 60, 3);
         for i in log_start_i..n_logged {
-            d1.insert(&log[i]);
+            d1.insert(crate::elem_to_u32(&log[i]));
         }
         for i in 0..(n_logged - n_dropped) {
-            d2.insert(&log[i]);
+            d2.insert(crate::elem_to_u32(&log[i]));
         }
         let res = calculate_difference_iblt(
             n_dropped, &log[log_start_i..].to_vec(), &d2);
@@ -716,7 +717,7 @@ mod tests {
             .map(|i| i.to_be_bytes().into_iter().collect::<Vec<_>>())
             .collect::<Vec<_>>();
         let hashes: HashSet<_> = elems.iter()
-            .map(|e| bloom_sd::elem_to_u32(e)).collect();
+            .map(|e| crate::elem_to_u32(e)).collect();
         assert_eq!(
             elems.len(), hashes.len(),
             "DJB hashes are unique in this test");
@@ -747,7 +748,7 @@ mod tests {
             .map(|i| i.to_be_bytes().into_iter().collect::<Vec<_>>())
             .collect::<Vec<_>>();
         let hashes: HashSet<_> = elems.iter()
-            .map(|e| bloom_sd::elem_to_u32(e)).collect();
+            .map(|e| crate::elem_to_u32(e)).collect();
         assert_eq!(
             elems.len(), hashes.len(),
             "DJB hashes are unique in this test");
@@ -757,7 +758,7 @@ mod tests {
             d.add(&elems[i]);
         }
         let removed = (0..n_dropped)
-            .map(|i| bloom_sd::elem_to_u32(&elems[i]))
+            .map(|i| crate::elem_to_u32(&elems[i]))
             .collect::<HashSet<_>>();
         assert_eq!(removed.len(), n_dropped, "DJB hashes should be unique in \
             the remove set (the property is also enforced because the elems \
@@ -777,8 +778,8 @@ mod tests {
         let (drop_i, drop_j) = (223, 6875);
         let elems = gen_elems_with_seed(n_logged, 112);
         assert_eq!(
-            bloom_sd::elem_to_u32(&elems[drop_i]),
-            bloom_sd::elem_to_u32(&elems[drop_j]));
+            crate::elem_to_u32(&elems[drop_i]),
+            crate::elem_to_u32(&elems[drop_j]));
 
         let mut d = Digest::new();
         // "Drop" the first `n_dropped` elems and the elem at index `drop_i`
@@ -789,9 +790,9 @@ mod tests {
             d.add(&elems[i]);
         }
         let mut removed = (0..n_dropped)
-            .map(|i| bloom_sd::elem_to_u32(&elems[i]))
+            .map(|i| crate::elem_to_u32(&elems[i]))
             .collect::<HashSet<_>>();
-        removed.insert(bloom_sd::elem_to_u32(&elems[drop_i]));
+        removed.insert(crate::elem_to_u32(&elems[drop_i]));
         assert_eq!(removed.len(), n_dropped + 1, "DJB hashes should be unique \
             in the remove set (the property is also enforced because the elems \
             eliminated from the IBLT must be unique).");
@@ -812,7 +813,7 @@ mod tests {
         let mut iblt = InvBloomLookupTable::new_with_seed(
             1234, DATA_SIZE, 8, 200, 2);
         for i in 0..n_dropped {
-            iblt.insert(&elems[i]);
+            iblt.insert(crate::elem_to_u32(&elems[i]));
         }
         let mut removed = iblt.eliminate_elems();
         let n_dropped_remaining = n_dropped - removed.len();
@@ -829,7 +830,7 @@ mod tests {
             assert!(dropped_is.remove(&dropped_i), "{}", dropped_i);
         }
         for dropped_i in dropped_is {
-            assert!(removed.remove(&bloom_sd::elem_to_u32(&elems[dropped_i])),
+            assert!(removed.remove(&crate::elem_to_u32(&elems[dropped_i])),
                 "{}", dropped_i);
         }
     }
@@ -844,7 +845,7 @@ mod tests {
         let mut iblt = InvBloomLookupTable::new_with_seed(
             1234, DATA_SIZE, 8, 150, 2);
         for i in 0..n_dropped {
-            iblt.insert(&elems[i]);
+            iblt.insert(crate::elem_to_u32(&elems[i]));
         }
         let removed = iblt.eliminate_elems();
         let n_dropped_remaining = n_dropped - removed.len();

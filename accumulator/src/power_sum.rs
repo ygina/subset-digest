@@ -240,8 +240,8 @@ impl PowerSumAccumulator {
     }
 
     pub fn from_bytes(bytes: &Vec<u8>) -> Self {
-        assert_eq!(bloom_sd::DJB_HASH_SIZE % 8, 0);
-        let bytes_per_psum = bloom_sd::DJB_HASH_SIZE / 8;
+        assert_eq!(crate::DJB_HASH_SIZE % 8, 0);
+        let bytes_per_psum = crate::DJB_HASH_SIZE / 8;
         let x: MiniPowerSumAccumulator = bincode::deserialize(bytes).unwrap();
         let num_psums = x.power_sums.len() / bytes_per_psum;
         Self {
@@ -280,7 +280,7 @@ impl Accumulator for PowerSumAccumulator {
     fn process(&mut self, elem: &[u8]) {
         self.digest.add(elem);
         let mut value: u32 = 1;
-        let elem_u32 = bloom_sd::elem_to_u32(elem) & DJB_MASK;
+        let elem_u32 = crate::elem_to_u32(elem) & DJB_MASK;
         for i in 0..self.power_sums.len() {
             value = mul_and_mod(value, elem_u32);
             self.power_sums[i] = add_and_mod(self.power_sums[i], value);
@@ -339,7 +339,7 @@ impl Accumulator for PowerSumAccumulator {
         let t1 = Instant::now();
         let rt = Builder::new_multi_thread().enable_all().build().unwrap();
         let elems_u32: Vec<u32> = elems.iter()
-            .map(|elem| bloom_sd::elem_to_u32(elem) & DJB_MASK)
+            .map(|elem| crate::elem_to_u32(elem) & DJB_MASK)
             .collect();
         let power_sums = rt.block_on(async {
             calculate_power_sums(&elems_u32, n_values).await
@@ -391,7 +391,7 @@ impl Accumulator for PowerSumAccumulator {
         let mut digest = Digest::new();
         let mut collisions: HashMap<u32, Vec<Vec<u8>>> = HashMap::new();
         for elem in elems {
-            let elem_u32 = bloom_sd::elem_to_u32(elem) & DJB_MASK;
+            let elem_u32 = crate::elem_to_u32(elem) & DJB_MASK;
             if !dropped_counts.contains_key(&elem_u32) {
                 // If an element in the log doesn't hash to a u32 root,
                 // it wasn't dropped, so add it to the digest.

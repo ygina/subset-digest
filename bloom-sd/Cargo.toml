@@ -8,7 +8,6 @@ edition = "2021"
 [dependencies]
 bit-vec = "0.6.3"
 bloom = "0.3.2"
-djb_hash = "0.1.3"
 rand = { version = "0.8.5", features = ["small_rng"] }
 serde = { version = "1.0.136", features = ["derive"] }
 siphasher = "0.3.10"

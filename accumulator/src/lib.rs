@@ -5,9 +5,22 @@ mod iblt;
 mod naive;
 mod power_sum;
 
+use std::hash::Hasher;
+use djb_hash::{HasherU32, x33a_u32::*};
+
 pub use iblt::*;
 pub use naive::NaiveAccumulator;
 pub use power_sum::PowerSumAccumulator;
+
+/// Mapped data size
+pub const DJB_HASH_SIZE: usize = 32;
+
+/// Maps an element in the lookup table to a u32.
+pub fn elem_to_u32(elem: &[u8]) -> u32 {
+    let mut hasher = X33aU32::new();
+    hasher.write(&elem);
+    hasher.finish_u32()
+}
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum ValidationResult {
