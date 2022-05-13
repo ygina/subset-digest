@@ -18,7 +18,8 @@ fn build_accumulator<G: Iterator<Item = Vec<u8>>>(
     let mut accumulator: Box<dyn Accumulator> = {
         match accumulator_ty {
             "naive" => Box::new(NaiveAccumulator::new(seed)),
-            "iblt" => if let Some(params) = iblt_params {
+            "iblt" => {
+                let params = iblt_params.unwrap();
                 assert_eq!(params.len(), 3);
                 let bits_per_entry: usize = params[0].parse().unwrap();
                 let cells_multiplier: usize = params[1].parse().unwrap();
@@ -26,8 +27,6 @@ fn build_accumulator<G: Iterator<Item = Vec<u8>>>(
                 Box::new(IBLTAccumulator::new_with_params(
                     threshold, bits_per_entry, cells_multiplier, num_hashes,
                     seed))
-            } else {
-                Box::new(IBLTAccumulator::new(threshold, seed))
             },
             "power_sum" => Box::new(PowerSumAccumulator::new(threshold, seed)),
             _ => unreachable!(),

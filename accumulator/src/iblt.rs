@@ -28,11 +28,6 @@ extern "C" {
     ) -> i32;
 }
 
-// IBLT parameters
-pub const DEFAULT_BITS_PER_ENTRY: usize = 8;
-pub const DEFAULT_CELLS_MULTIPLIER: usize = 10;
-pub const DEFAULT_NUM_HASHES: u32 = 2;
-
 /// The counting bloom filter (IBLT) accumulator stores a IBLT of all processed
 /// packets in addition to the digest.
 ///
@@ -276,16 +271,6 @@ impl IBLTAccumulator {
         Self { digest, iblt }
     }
 
-    pub fn new(threshold: usize, seed: Option<u64>) -> Self {
-        Self::new_with_params(
-            threshold,
-            DEFAULT_BITS_PER_ENTRY,
-            DEFAULT_CELLS_MULTIPLIER,
-            DEFAULT_NUM_HASHES,
-            seed,
-        )
-    }
-
     pub fn from_bytes(
         bytes: &Vec<u8>,
         bits_per_entry: usize,
@@ -460,6 +445,19 @@ mod tests {
     use super::*;
 
     const NBYTES: usize = 16;
+    const DEFAULT_BITS_PER_ENTRY: usize = 8;
+    const DEFAULT_CELLS_MULTIPLIER: usize = 10;
+    const DEFAULT_NUM_HASHES: u32 = 2;
+
+    fn new_accumulator(threshold: usize) -> IBLTAccumulator {
+        IBLTAccumulator::new_with_params(
+            threshold,
+            DEFAULT_BITS_PER_ENTRY,
+            DEFAULT_CELLS_MULTIPLIER,
+            DEFAULT_NUM_HASHES,
+            None,
+        )
+    }
 
     fn gen_elems_with_seed(n: usize, seed: u64) -> Vec<Vec<u8>> {
         use rand::{SeedableRng, Rng};
@@ -470,14 +468,14 @@ mod tests {
 
     #[test]
     fn test_not_equals() {
-        let acc1 = IBLTAccumulator::new(100, None);
-        let acc2 = IBLTAccumulator::new(100, None);
+        let acc1 = new_accumulator(100);
+        let acc2 = new_accumulator(100);
         assert!(!acc1.equals(&acc2), "different digest nonce");
     }
 
     #[test]
     fn bincode_empty_serialization() {
-        let acc1 = IBLTAccumulator::new(1000, None);
+        let acc1 = new_accumulator(1000);
         let bytes = bincode::serialize(&acc1).unwrap();
         let acc2: IBLTAccumulator = bincode::deserialize(&bytes).unwrap();
         assert!(acc1.equals(&acc2));
@@ -485,7 +483,7 @@ mod tests {
 
     #[test]
     fn bincode_serialization_with_data() {
-        let mut acc1 = IBLTAccumulator::new(1000, None);
+        let mut acc1 = new_accumulator(1000);
         let bytes = bincode::serialize(&acc1).unwrap();
         let acc2: IBLTAccumulator = bincode::deserialize(&bytes).unwrap();
         acc1.process_batch(&gen_elems_with_seed(10, 111));
@@ -497,7 +495,7 @@ mod tests {
 
     #[test]
     fn empty_serialization() {
-        let acc1 = IBLTAccumulator::new(1000, None);
+        let acc1 = new_accumulator(1000);
         let bytes = acc1.to_bytes();
         let acc2 = IBLTAccumulator::from_bytes(
             &bytes,
@@ -518,7 +516,7 @@ mod tests {
     #[test]
     fn serialization_with_data() {
         // repeat empty serialization
-        let mut acc1 = IBLTAccumulator::new(1000, None);
+        let mut acc1 = new_accumulator(1000);
         let acc2 = IBLTAccumulator::from_bytes(
             &acc1.to_bytes(),
             DEFAULT_BITS_PER_ENTRY,

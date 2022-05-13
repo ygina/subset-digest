@@ -230,27 +230,41 @@ mod tests {
         base_accumulator_test(Box::new(accumulator), 1000, 10, true);
     }
 
+    const IBLT_BITS_PER_ENTRY: usize = 8;
+    const IBLT_CELLS_MULTIPLIER: usize = 10;
+    const IBLT_NUM_HASHES: u32 = 2;
+
+    fn new_iblt_accumulator(threshold: usize) -> IBLTAccumulator {
+        IBLTAccumulator::new_with_params(
+            threshold,
+            IBLT_BITS_PER_ENTRY,
+            IBLT_CELLS_MULTIPLIER,
+            IBLT_NUM_HASHES,
+            SEED,
+        )
+    }
+
     #[test]
     fn iblt_none_dropped() {
-        let accumulator = IBLTAccumulator::new(100, SEED);
+        let accumulator = new_iblt_accumulator(100);
         base_accumulator_test(Box::new(accumulator), 100, 0, false);
     }
 
     #[test]
     fn iblt_all_dropped() {
-        let accumulator = IBLTAccumulator::new(100, SEED);
+        let accumulator = new_iblt_accumulator(100);
         base_accumulator_test(Box::new(accumulator), 100, 100, false);
     }
 
     #[test]
     fn iblt_one_dropped() {
-        let accumulator = IBLTAccumulator::new(100, SEED);
+        let accumulator = new_iblt_accumulator(100);
         base_accumulator_test(Box::new(accumulator), 100, 1, false);
     }
 
     #[test]
     fn iblt_many_dropped_without_ilp_solver() {
-        let accumulator = IBLTAccumulator::new(1000, SEED);
+        let accumulator = new_iblt_accumulator(1000);
         base_accumulator_test(Box::new(accumulator), 1000, 10, false);
     }
 
@@ -262,19 +276,19 @@ mod tests {
 
     #[test]
     fn iblt_one_malicious_and_none_dropped() {
-        let accumulator = IBLTAccumulator::new(100, SEED);
+        let accumulator = new_iblt_accumulator(100);
         base_accumulator_test(Box::new(accumulator), 100, 0, true);
     }
 
     #[test]
     fn iblt_one_malicious_and_one_dropped() {
-        let accumulator = IBLTAccumulator::new(100, SEED);
+        let accumulator = new_iblt_accumulator(100);
         base_accumulator_test(Box::new(accumulator), 100, 1, true);
     }
 
     #[test]
     fn iblt_one_malicious_and_many_dropped() {
-        let accumulator = IBLTAccumulator::new(100, SEED);
+        let accumulator = new_iblt_accumulator(100);
         base_accumulator_test(Box::new(accumulator), 1000, 10, true);
     }
 }

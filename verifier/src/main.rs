@@ -48,6 +48,7 @@ fn get_accumulator(
     reset: bool,
     port: u32,
     ty: &str,
+    iblt_params: Option<Vec<&str>>,
 ) -> Box<dyn Accumulator> {
     let mut buf = Vec::new();
     if let Some(ssh) = ssh {
@@ -83,11 +84,10 @@ fn get_accumulator(
     match ty {
         "naive" => Box::new(bincode::deserialize::<NaiveAccumulator>(&buf).unwrap()),
         "iblt" => {
-            warn!("do IBLT parameters match the router's?");
             Box::new(IBLTAccumulator::from_bytes(
                 &buf,
-                DEFAULT_BITS_PER_ENTRY,
-                DEFAULT_NUM_HASHES,
+                iblt_params.as_ref().unwrap()[0].parse().unwrap(),
+                iblt_params.as_ref().unwrap()[2].parse().unwrap(),
             ))
         },
         "power_sum" => Box::new(PowerSumAccumulator::from_bytes(&buf)),
@@ -375,6 +375,14 @@ fn main() {
             .multiple_values(true)
             .number_of_values(3)
             .value_names(&["address", "username", "private_key_file"]))
+        .arg(Arg::new("iblt-params")
+            .help("IBLT parameters.")
+            .long("iblt-params")
+            .value_names(&["bits_per_entry", "cells_multiplier", "num_hashes"])
+            .takes_value(true)
+            .number_of_values(3)
+            .required_if_eq("accumulator", "iblt")
+            .default_values(&["8", "10", "2"]))
         .arg(Arg::new("accumulator")
             .help("")
             .short('a')
@@ -395,6 +403,8 @@ fn main() {
     let accumulator_ssh = matches.values_of("accumulator-ssh").map(|ssh|
        ssh.collect());
     let router_ssh = matches.values_of("router-ssh").map(|ssh| ssh.collect());
+    let iblt_params: Option<Vec<&str>> = matches.values_of("iblt-params")
+        .map(|params| params.collect());
     let drop: Option<usize> = matches.value_of("drop").map(|num|
         num.parse().unwrap());
 
@@ -414,6 +424,7 @@ fn main() {
             reset,
             port,
             accumulator_type,
+            iblt_params,
         );
         let t2 = Instant::now();
         info!("get_accumulator: {:?}", t2 - t1);

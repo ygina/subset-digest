@@ -29,11 +29,24 @@ impl Accumulator for MockAccumulator {
     }
 }
 
-fn gen_accumulator(ty: &str, threshold: usize) -> Box<dyn Accumulator> {
+fn gen_accumulator(
+    ty: &str,
+    threshold: usize,
+    iblt_params: Option<Vec<&str>>,
+) -> Box<dyn Accumulator> {
     match ty {
         "mock" => Box::new(MockAccumulator {}),
         "naive" => Box::new(NaiveAccumulator::new(None)),
-        "iblt" => Box::new(IBLTAccumulator::new(threshold, None)),
+        "iblt" => {
+            let params = iblt_params.unwrap();
+            Box::new(IBLTAccumulator::new_with_params(
+                threshold,
+                params[0].parse().unwrap(),
+                params[1].parse().unwrap(),
+                params[2].parse().unwrap(),
+                None,
+            ))
+        },
         "psum" => Box::new(PowerSumAccumulator::new(threshold, None)),
         _ => unreachable!(),
     }
@@ -65,6 +78,14 @@ fn main() {
             .long("threshold")
             .takes_value(true)
             .default_value("1000"))
+        .arg(Arg::new("iblt-params")
+            .help("IBLT parameters.")
+            .long("iblt-params")
+            .value_names(&["bits_per_entry", "cells_multiplier", "num_hashes"])
+            .takes_value(true)
+            .number_of_values(3)
+            .required_if_eq("accumulator", "iblt")
+            .default_values(&["8", "10", "2"]))
         .arg(Arg::new("accumulator")
             .help("Accumulator to benchmark. If none are passed, runs them
                all.")
@@ -77,17 +98,20 @@ fn main() {
             .possible_value("psum"))
         .get_matches();
 
-    let n: usize = matches.value_of("n").unwrap().parse().unwrap();
-    let b: usize = matches.value_of("bytes").unwrap().parse().unwrap();
-    let t: usize = matches.value_of("threshold").unwrap().parse().unwrap();
-    let trials: usize = matches.value_of("trials").unwrap().parse().unwrap();
+    let n: usize = matches.value_of_t("n").unwrap();
+    let b: usize = matches.value_of_t("bytes").unwrap();
+    let t: usize = matches.value_of_t("threshold").unwrap();
+    let trials: usize = matches.value_of_t("trials").unwrap();
+    let iblt_params: Option<Vec<&str>> = matches.values_of("iblt-params")
+        .map(|params| params.collect());
     let tys = if let Some(ty) = matches.value_of("accumulator") {
         vec![ty]
     } else {
         vec!["mock", "naive", "iblt", "psum"]
     };
-    let mut accs: Vec<_> =
-        tys.iter().map(|ty| gen_accumulator(ty, t)).collect();
+    let mut accs: Vec<_> = tys.iter()
+        .map(|ty| gen_accumulator(ty, t, iblt_params.clone()))
+        .collect();
 
     // Generate elements.
     let mut rng = rand::thread_rng();

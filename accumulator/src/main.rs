@@ -196,6 +196,14 @@ async fn main() {
             .long("threshold")
             .takes_value(true)
             .default_value("10000"))
+        .arg(Arg::new("iblt-params")
+            .help("IBLT parameters.")
+            .long("iblt-params")
+            .value_names(&["bits_per_entry", "cells_multiplier", "num_hashes"])
+            .takes_value(true)
+            .number_of_values(3)
+            .required_if_eq("accumulator", "iblt")
+            .default_values(&["8", "10", "2"]))
         .arg(Arg::new("accumulator")
             .help("")
             .short('a')
@@ -216,7 +224,17 @@ async fn main() {
             .parse().unwrap();
         match matches.value_of("accumulator").unwrap() {
             "naive" => Box::new(NaiveAccumulator::new(None)),
-            "iblt" => Box::new(IBLTAccumulator::new(threshold, None)),
+            "iblt" => {
+                let params: Vec<&str> =
+                    matches.values_of("iblt-params").unwrap().collect();
+                Box::new(IBLTAccumulator::new_with_params(
+                    threshold,
+                    params[0].parse().unwrap(),
+                    params[1].parse().unwrap(),
+                    params[2].parse().unwrap(),
+                    None,
+                ))
+            },
             "power_sum" => Box::new(PowerSumAccumulator::new(threshold, None)),
             _ => unreachable!(),
         }
