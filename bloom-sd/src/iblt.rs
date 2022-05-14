@@ -1,5 +1,6 @@
 use std::collections::HashSet;
 use std::num::Wrapping;
+use std::marker::PhantomData;
 
 use rand;
 use serde::{Serialize, Deserialize};
@@ -23,7 +24,7 @@ impl From<SipHasher13Def> for SipHasher13 {
 }
 
 #[derive(Serialize, Deserialize)]
-pub struct InvBloomLookupTable {
+pub struct InvBloomLookupTable<T> {
     counters: ValueVec,
     // sum of djb_hashed data with wraparound overflow
     data: ValueVec,
@@ -34,9 +35,10 @@ pub struct InvBloomLookupTable {
     hash_builder_one: SipHasher13,
     #[serde(with = "SipHasher13Def")]
     hash_builder_two: SipHasher13,
+    phantom: PhantomData<T>,
 }
 
-impl InvBloomLookupTable {
+impl<T> InvBloomLookupTable<T> {
     /// Creates a InvBloomLookupTable that uses `bits_per_entry` bits for each
     /// entry, `num_entries` number of entries, and `num_hashes` number of hash
     /// functions. The data_size is the number of bits in the data field,
@@ -51,7 +53,7 @@ impl InvBloomLookupTable {
         bits_per_entry: usize,
         num_entries: usize,
         num_hashes: u32,
-    ) -> Self {
+    ) -> InvBloomLookupTable<T> {
         use rand::RngCore;
         let seed = rand::rngs::OsRng.next_u64();
         Self::new_with_seed(
@@ -70,7 +72,7 @@ impl InvBloomLookupTable {
         bits_per_entry: usize,
         num_entries: usize,
         num_hashes: u32,
-    ) -> Self {
+    ) -> InvBloomLookupTable<T> {
         assert!(data_size == 32);
         use rand::{SeedableRng, rngs::SmallRng, Rng};
         let mut rng = SmallRng::seed_from_u64(seed);
@@ -82,6 +84,7 @@ impl InvBloomLookupTable {
             seed,
             hash_builder_one: SipHasher13::new_with_keys(rng.gen(), rng.gen()),
             hash_builder_two: SipHasher13::new_with_keys(rng.gen(), rng.gen()),
+            phantom: PhantomData,
         }
     }
 
@@ -97,6 +100,7 @@ impl InvBloomLookupTable {
             seed: self.seed,
             hash_builder_one: self.hash_builder_one.clone(),
             hash_builder_two: self.hash_builder_two.clone(),
+            phantom: PhantomData,
         }
     }
 
@@ -136,11 +140,33 @@ impl InvBloomLookupTable {
             && self.data == other.data
             && self.counters == other.counters
     }
+}
 
+pub trait IBLTOperations<T> {
     /// Inserts an item, returns true if the item was already in the filter
     /// any number of times.
+    fn insert(&mut self, item: T) -> bool;
+
+    /// Removes an item, panics if the item does not exist.
+    fn remove(&mut self, item: T);
+
+    /// Checks if the item has been inserted into this InvBloomLookupTable.
+    /// This function can return false positives, but not false negatives.
+    fn contains(&self, item: T) -> bool;
+
+    /// Gets the indexes of the item in the vector.
+    fn indexes(&self, item: T) -> Vec<usize>;
+
+    /// Enumerates as many items as possible in the IBLT and removes them.
+    /// Returns the removed items. Note removed elements must be unique
+    /// because the corresponding counters would be at least 2.
+    /// The caller will need to map elements to the inserted data type.
+    fn eliminate_elems(&mut self) -> HashSet<T>;
+}
+
+impl<T> InvBloomLookupTable<T> {
     pub fn insert(&mut self, item: u32) -> bool {
-        let mut min = u32::max_value();
+        let mut min = self.counters.max_value();
         for h in HashIter::from(item,
                                 self.num_hashes,
                                 &self.hash_builder_one,
@@ -153,7 +179,6 @@ impl InvBloomLookupTable {
             if cur < self.counters.max_value() {
                 self.counters.set(idx, cur + 1);
             } else {
-                // TODO: write a test for wraparound
                 self.counters.set(idx, 0);
             }
             self.data.set(
@@ -162,13 +187,8 @@ impl InvBloomLookupTable {
         min > 0
     }
 
-    /// Removes an item, panics if the item does not exist.
     pub fn remove(&mut self, item: u32) {
-        self.remove_u32(item);
-    }
-
-    fn remove_u32(&mut self, item_u32: u32) {
-        for h in HashIter::from(item_u32,
+        for h in HashIter::from(item,
                             self.num_hashes,
                             &self.hash_builder_one,
                             &self.hash_builder_two) {
@@ -181,12 +201,10 @@ impl InvBloomLookupTable {
                 self.counters.set(idx, cur - 1);
             }
             self.data.set(
-                idx, (Wrapping(self.data.get(idx)) - Wrapping(item_u32)).0);
+                idx, (Wrapping(self.data.get(idx)) - Wrapping(item)).0);
         }
     }
 
-    /// Checks if the item has been inserted into this InvBloomLookupTable.
-    /// This function can return false positives, but not false negatives.
     pub fn contains(&self, item: u32) -> bool {
         for h in HashIter::from(item,
                                 self.num_hashes,
@@ -201,7 +219,6 @@ impl InvBloomLookupTable {
         true
     }
 
-    /// Gets the indexes of the item in the vector.
     pub fn indexes(&self, item: u32) -> Vec<usize> {
         HashIter::from(item,
                        self.num_hashes,
@@ -212,10 +229,6 @@ impl InvBloomLookupTable {
             .collect()
     }
 
-    /// Enumerates as many items as possible in the IBLT and removes them.
-    /// Returns the removed items. Note removed elements must be unique
-    /// because the corresponding counters would be at least 2.
-    /// The caller will need to map elements to u32.
     pub fn eliminate_elems(&mut self) -> HashSet<u32> {
         // Loop through all the counters of the IBLT until there are no
         // remaining cells with count 1. This is O(num_counters*max_count).
@@ -227,7 +240,7 @@ impl InvBloomLookupTable {
                     continue;
                 }
                 let item = self.data.get(i).clone();
-                self.remove_u32(item);
+                self.remove(item);
                 assert!(removed_set.insert(item));
                 removed = true;
             }
@@ -238,6 +251,95 @@ impl InvBloomLookupTable {
     }
 }
 
+// impl IBLTOperations<u16> for InvBloomLookupTable {
+//     fn insert(&mut self, item: u16) -> bool {
+//         assert_eq!(self.data_size, 16);
+//         let mut min = self.counters.max_value();
+//         for h in HashIter::from(item,
+//                                 self.num_hashes,
+//                                 &self.hash_builder_one,
+//                                 &self.hash_builder_two) {
+//             let idx = (h % self.num_entries) as usize;
+//             let cur = self.counters.get(idx);
+//             if cur < min {
+//                 min = cur;
+//             }
+//             if cur < self.counters.max_value() {
+//                 self.counters.set(idx, cur + 1);
+//             } else {
+//                 self.counters.set(idx, 0);
+//             }
+//             self.data.set(idx, (Wrapping(self.data.get(idx) as u16)
+//                 + Wrapping(item as u16)).0 as u32);
+//         }
+//         min > 0
+//     }
+
+//     fn remove(&mut self, item: u16) {
+//         for h in HashIter::from(item,
+//                             self.num_hashes,
+//                             &self.hash_builder_one,
+//                             &self.hash_builder_two) {
+//             let idx = (h % self.num_entries) as usize;
+//             let cur = self.counters.get(idx);
+//             if cur == 0 {
+//                 // wraparound
+//                 self.counters.set(idx, self.counters.max_value());
+//             } else {
+//                 self.counters.set(idx, cur - 1);
+//             }
+//             self.data.set(
+//                 idx, (Wrapping(self.data.get(idx) as u16) - Wrapping(item
+//                     as u16)).0 as u32);
+//         }
+//     }
+
+//     fn contains(&self, item: u16) -> bool {
+//         for h in HashIter::from(item,
+//                                 self.num_hashes,
+//                                 &self.hash_builder_one,
+//                                 &self.hash_builder_two) {
+//             let idx = (h % self.num_entries) as usize;
+//             let cur = self.counters.get(idx);
+//             if cur == 0 {
+//                 return false;
+//             }
+//         }
+//         true
+//     }
+
+//     fn indexes(&self, item: u16) -> Vec<usize> {
+//         HashIter::from(item,
+//                        self.num_hashes,
+//                        &self.hash_builder_one,
+//                        &self.hash_builder_two)
+//             .into_iter()
+//             .map(|h| (h % self.num_entries) as usize)
+//             .collect()
+//     }
+
+//     fn eliminate_elems(&mut self) -> HashSet<u16> {
+//         // Loop through all the counters of the IBLT until there are no
+//         // remaining cells with count 1. This is O(num_counters*max_count).
+//         let mut removed_set: HashSet<u16> = HashSet::new();
+//         loop {
+//             let mut removed = false;
+//             for i in 0..(self.num_entries as usize) {
+//                 if self.counters.get(i) != 1 {
+//                     continue;
+//                 }
+//                 let item = self.data.get(i).clone() as u16;
+//                 self.remove(item);
+//                 assert!(removed_set.insert(item));
+//                 removed = true;
+//             }
+//             if !removed {
+//                 return removed_set;
+//             }
+//         }
+//     }
+// }
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -245,7 +347,7 @@ mod tests {
 
     const DATA_SIZE: u32 = 32;
 
-    fn init_iblt() -> InvBloomLookupTable {
+    fn init_iblt() -> InvBloomLookupTable<u32> {
         InvBloomLookupTable::new(DATA_SIZE, 8, 100, 2)
     }
 
@@ -292,7 +394,8 @@ mod tests {
 
     #[test]
     fn test_new_iblt_with_seed() {
-        let iblt1 = InvBloomLookupTable::new_with_seed(111, DATA_SIZE, 8, 100, 2);
+        let iblt1: InvBloomLookupTable<u32> =
+            InvBloomLookupTable::new_with_seed(111, DATA_SIZE, 8, 100, 2);
         let iblt2 = InvBloomLookupTable::new_with_seed(222, DATA_SIZE, 8, 100, 2);
         let iblt3 = InvBloomLookupTable::new_with_seed(111, DATA_SIZE, 8, 100, 2);
         assert!(!iblt1.equals(&iblt2));
@@ -354,7 +457,8 @@ mod tests {
     #[test]
     fn test_insert_with_counter_overflow() {
         // 1 bit per entry
-        let mut iblt = InvBloomLookupTable::new(DATA_SIZE, 1, 10, 1);
+        let mut iblt: InvBloomLookupTable<u32> =
+            InvBloomLookupTable::new(DATA_SIZE, 1, 10, 1);
         let elem = 1234;
         let i = iblt.indexes(elem)[0];
 
@@ -371,7 +475,8 @@ mod tests {
 
     #[test]
     fn test_insert_with_data_wraparound() {
-        let mut iblt = InvBloomLookupTable::new(DATA_SIZE, 2, 10, 1);
+        let mut iblt: InvBloomLookupTable<u32> =
+            InvBloomLookupTable::new(DATA_SIZE, 2, 10, 1);
         let elem = 2086475114;  // very big element
         let i = iblt.indexes(elem)[0];
 
@@ -389,8 +494,8 @@ mod tests {
 
     #[test]
     fn test_eliminate_all_elems_without_duplicates() {
-        let mut iblt = InvBloomLookupTable::new_with_seed(
-            111, DATA_SIZE, 8, 10, 2);
+        let mut iblt: InvBloomLookupTable<u32> =
+            InvBloomLookupTable::new_with_seed(111, DATA_SIZE, 8, 10, 2);
         let n: usize = 6;
         for elem in 0..(n as u32) {
             iblt.insert(elem);
@@ -409,13 +514,13 @@ mod tests {
 
     #[test]
     fn test_eliminate_all_elems_with_duplicates() {
-        let mut iblt = InvBloomLookupTable::new_with_seed(
-            111, DATA_SIZE, 8, 10, 2);
+        let mut iblt: InvBloomLookupTable<u32> =
+            InvBloomLookupTable::new_with_seed(111, DATA_SIZE, 8, 10, 2);
         let n: usize = 7;
         for elem in 1..(n as u32) {
             iblt.insert(elem);
         }
-        iblt.insert(1);  // duplicate element
+        iblt.insert(1_u32);  // duplicate element
         assert_eq!(vvsum(iblt.counters()), n * (iblt.num_hashes() as usize));
 
         // Not all elements were eliminated

@@ -41,7 +41,7 @@ const DATA_SIZE: u32 = 32;
 #[derive(Serialize, Deserialize)]
 pub struct IBLTAccumulator {
     digest: Digest,
-    iblt: InvBloomLookupTable,
+    iblt: InvBloomLookupTable<u32>,
 }
 
 /// Calculate an IBLT from the logged elements, and subtract the IBLT of the
@@ -53,8 +53,8 @@ pub struct IBLTAccumulator {
 fn calculate_difference_iblt(
     n_dropped: usize,
     logged_elems: &Vec<Vec<u8>>,
-    received_iblt: &InvBloomLookupTable,
-) -> Result<InvBloomLookupTable, ValidationResult> {
+    received_iblt: &InvBloomLookupTable<u32>,
+) -> Result<InvBloomLookupTable<u32>, ValidationResult> {
     let mut iblt = received_iblt.empty_clone();
     for elem in logged_elems {
         iblt.insert(crate::elem_to_u32(elem));
@@ -188,7 +188,7 @@ fn check_digest_from_removed_set(
 fn solve_ilp_for_iblt(
     n_dropped_remaining: usize,
     elems: &Vec<Vec<u8>>,
-    iblt: InvBloomLookupTable,
+    iblt: InvBloomLookupTable<u32>,
 ) -> Option<HashSet<usize>> {
     // Number of equations = # of remaining candidate elements in `elems_i`.
     // Number of variables = number of cells in the IBLT.
@@ -272,7 +272,7 @@ impl IBLTAccumulator {
             Digest::new()
         };
         let seed = u64::from_be_bytes(digest.nonce);
-        let iblt = InvBloomLookupTable::new_with_seed(
+        let iblt: InvBloomLookupTable<u32> = InvBloomLookupTable::new_with_seed(
             seed,
             DATA_SIZE,
             bits_per_entry,
@@ -299,7 +299,7 @@ impl IBLTAccumulator {
         let x: MiniIBLTAccumulator =
             bincode::deserialize(bytes).unwrap();
         let num_entries = x.counters.len() * 8 / bits_per_entry;
-        let mut iblt = InvBloomLookupTable::new_with_seed(
+        let mut iblt: InvBloomLookupTable<u32> = InvBloomLookupTable::new_with_seed(
             x.seed, data_size, bits_per_entry, num_entries, num_hashes);
         *iblt.counters_mut() = to_valuevec(x.counters, bits_per_entry);
         *iblt.data_mut() = to_valuevec(x.data, data_size as usize);
@@ -572,7 +572,7 @@ mod tests {
         let log = (0..(n_logged as u32))
             .map(|i| i.to_be_bytes().into_iter().collect::<Vec<_>>())
             .collect::<Vec<_>>();
-        let mut iblt = InvBloomLookupTable::new_with_seed(
+        let mut iblt: InvBloomLookupTable<u32> = InvBloomLookupTable::new_with_seed(
             111, DATA_SIZE, 4, 10, 3);
         for elem in &log {
             iblt.insert(crate::elem_to_u32(&elem));
@@ -591,9 +591,9 @@ mod tests {
 
         // Insert only the first 40 elements into the IBLT.
         let bpe = 4;
-        let mut d1 = InvBloomLookupTable::new_with_seed(
+        let mut d1: InvBloomLookupTable<u32> = InvBloomLookupTable::new_with_seed(
             111, DATA_SIZE, bpe, 60, 3);
-        let mut d2 = InvBloomLookupTable::new_with_seed(
+        let mut d2: InvBloomLookupTable<u32> = InvBloomLookupTable::new_with_seed(
             111, DATA_SIZE, bpe, 60, 3);
         for i in 0..n_logged {
             d1.insert(crate::elem_to_u32(&log[i]));
@@ -647,10 +647,10 @@ mod tests {
         let log = (0..(n_logged as u32))
             .map(|i| i.to_be_bytes().into_iter().collect::<Vec<_>>())
             .collect::<Vec<_>>();
-        let mut d1 = InvBloomLookupTable::new_with_seed(
-            111, DATA_SIZE, 4, 6, 3);
-        let mut d2 = InvBloomLookupTable::new_with_seed(
-            111, DATA_SIZE, 4, 6, 3);
+        let mut d1: InvBloomLookupTable<u32> =
+            InvBloomLookupTable::new_with_seed(111, DATA_SIZE, 4, 6, 3);
+        let mut d2: InvBloomLookupTable<u32> =
+            InvBloomLookupTable::new_with_seed(111, DATA_SIZE, 4, 6, 3);
         for i in 0..n_logged {
             d1.insert(crate::elem_to_u32(&log[i]));
         }
@@ -673,10 +673,10 @@ mod tests {
         let log = (0..(n_logged as u32))
             .map(|i| i.to_be_bytes().into_iter().collect::<Vec<_>>())
             .collect::<Vec<_>>();
-        let mut d1 = InvBloomLookupTable::new_with_seed(
-            111, DATA_SIZE, 4, 60, 3);
-        let mut d2 = InvBloomLookupTable::new_with_seed(
-            111, DATA_SIZE, 4, 60, 3);
+        let mut d1: InvBloomLookupTable<u32> =
+            InvBloomLookupTable::new_with_seed(111, DATA_SIZE, 4, 60, 3);
+        let mut d2: InvBloomLookupTable<u32> =
+            InvBloomLookupTable::new_with_seed(111, DATA_SIZE, 4, 60, 3);
         for i in log_start_i..n_logged {
             d1.insert(crate::elem_to_u32(&log[i]));
         }
@@ -810,7 +810,7 @@ mod tests {
         let elems = gen_elems_with_seed(n_logged, 123);
 
         // Set up the IBLT with the dropped elements and eliminate.
-        let mut iblt = InvBloomLookupTable::new_with_seed(
+        let mut iblt: InvBloomLookupTable<u32> = InvBloomLookupTable::new_with_seed(
             1234, DATA_SIZE, 8, 200, 2);
         for i in 0..n_dropped {
             iblt.insert(crate::elem_to_u32(&elems[i]));
@@ -842,7 +842,7 @@ mod tests {
         let elems = gen_elems_with_seed(n_logged, 123);
 
         // Set up the IBLT with the dropped elements and eliminate.
-        let mut iblt = InvBloomLookupTable::new_with_seed(
+        let mut iblt: InvBloomLookupTable<u32> = InvBloomLookupTable::new_with_seed(
             1234, DATA_SIZE, 8, 150, 2);
         for i in 0..n_dropped {
             iblt.insert(crate::elem_to_u32(&elems[i]));
