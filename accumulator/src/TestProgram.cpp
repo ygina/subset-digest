@@ -8,6 +8,7 @@
 #include <random>    // for std::random_device, std::mt19937_64
 #include <string>    // for std::string
 #include <unordered_map> // for std::unordered_map
+#include <map>
 #include <vector>    // for std::vector
 
 #include "PowerSumAccumulator.hpp"
@@ -33,7 +34,8 @@
 
 template <typename T>
 bool is_subset(const std::vector<T> &a, const std::vector<T> &b) {
-    std::unordered_map<T, std::size_t> a_counts, b_counts;
+    // std::unordered_map<T, std::size_t> a_counts, b_counts;
+    std::map<T, std::size_t> a_counts, b_counts;
     for (const auto &x : a) { ++a_counts[x]; }
     for (const auto &x : b) { ++b_counts[x]; }
     for (const auto &x : a) {
@@ -42,40 +44,52 @@ bool is_subset(const std::vector<T> &a, const std::vector<T> &b) {
     return true;
 }
 
-
 int main() {
 
+#if 0
     constexpr std::size_t NUM_PACKETS_SENT = 1000;
     constexpr double DROP_PROBABILITY = 0.02;
     constexpr std::size_t DIGEST_SIZE = 32;
+#else
+    // p of any collision on 16 bits with 500 things is approx 500(2**8)
+    constexpr std::size_t NUM_PACKETS_SENT = 500;
+    constexpr double DROP_PROBABILITY = 0.02;
+    constexpr std::size_t DIGEST_SIZE = 32;
+#endif
 
     // using packet_t = std::uint32_t;
     // using wide_t = std::uint64_t;
     // // This is the largest prime number that fits in a 32-bit unsigned integer.
     // constexpr packet_t MODULUS = 4'294'967'291; // 2^32 - 5
 
-    using packet_t = std::uint16_t;
+    constexpr size_t full_packet_n_bytes = 1024;
+
+    using packet_t = std::array<uint8_t, full_packet_n_bytes>;
+    using pkt_hash_t = std::uint16_t;
     using wide_t = std::uint32_t;
     // This is the largest prime number that fits in a 16-bit unsigned integer.
-    constexpr packet_t MODULUS = 65'521; // 2^16 - 5
+    constexpr pkt_hash_t MODULUS = 65'521; // 2^16 - 5
 
-    using packet_limits = std::numeric_limits<packet_t>;
-    using accumulator_t = PowerSumAccumulator<packet_t, wide_t,
-                                              MODULUS, DIGEST_SIZE>;
-    using evaluator_t = MonicPolynomialEvaluator<packet_t, wide_t,
+    using packet_limits = std::numeric_limits<pkt_hash_t>;
+    using char_limits = std::numeric_limits<uint8_t>;
+    using accumulator_t = PowerSumAccumulator<pkt_hash_t, wide_t,
+                                              MODULUS, DIGEST_SIZE,
+                                              full_packet_n_bytes>;
+    using evaluator_t = MonicPolynomialEvaluator<pkt_hash_t, wide_t,
                                                  MODULUS, DIGEST_SIZE>;
 
     // Initialize C++ PRNG.
     std::random_device rd;
     std::mt19937_64 gen(rd());
-    std::uniform_int_distribution<packet_t> packet_dist(packet_limits::min(),
-                                                        packet_limits::max());
+    std::uniform_int_distribution<uint8_t> packet_dist(char_limits::min(),
+                                                       char_limits::max());
     std::uniform_real_distribution<double> drop_dist(0.0, 1.0);
 
     // Initialize packet data structures.
-    std::vector<packet_t> sent_packets(NUM_PACKETS_SENT);
+    std::vector<packet_t> packets(NUM_PACKETS_SENT);
     std::vector<packet_t> received_packets;
     std::vector<packet_t> resent_packets;
+    std::vector<pkt_hash_t> packet_hashes;
     received_packets.reserve(NUM_PACKETS_SENT);
     resent_packets.reserve(NUM_PACKETS_SENT);
     accumulator_t server_acc;
@@ -89,17 +103,20 @@ int main() {
 
         // Generate uniformly random packets for the server to send.
         for (std::size_t i = 0; i < NUM_PACKETS_SENT; ++i) {
-            const packet_t packet = packet_dist(gen);
-            sent_packets[i] = packet;
-            server_acc.insert(packet);
+            for (size_t j = 0; j < sizeof(packets[i]); j++)
+                packets[i][j] = packet_dist(gen);
+            server_acc.insert(packets[i]);
         }
 
         // Generate list of packets that the middlebox receives, with
         // simulated packet loss between the server and the middlebox.
-        for (const auto &packet : sent_packets) {
+        size_t n_dropped = 0;
+        for (const auto &packet : packets) {
             if (drop_dist(gen) >= DROP_PROBABILITY) {
                 received_packets.push_back(packet);
                 middlebox_acc.insert(packet);
+            } else {
+                n_dropped++;
             }
         }
         // const std::size_t num_dropped_packets =
@@ -110,17 +127,30 @@ int main() {
         // middlebox's digest. It then uses that difference to construct the
         // coefficients of a polynomial p, whose roots are the packets that
         // were dropped.
+#if 0
+        server_acc.unbuffer();
+        middlebox_acc.unbuffer(server_acc.chosen_offset);
+#else
+        middlebox_acc.unbuffer();
+        server_acc.unbuffer(middlebox_acc.chosen_offset);
+#endif
+        packet_hashes = server_acc.pkt_hashes;
         server_acc -= middlebox_acc;
         const auto coeffs = server_acc.to_polynomial_coefficients();
 
         // The server checks whether each of the packets it sent is a root of
         // this polynomial p. If so, the server adds that packet to a queue of
         // packets to be re-sent to the middlebox.
-        for (const auto &packet : sent_packets) {
-            if (!evaluator_t::eval(coeffs, packet)) {
-                resent_packets.push_back(packet);
+        for (size_t i = 0; i < NUM_PACKETS_SENT; i++) {
+            if (!evaluator_t::eval(coeffs, packet_hashes[i])) {
+                resent_packets.push_back(packets[i]);
             }
         }
+
+        std::cout << "Resent " << (resent_packets.size() - n_dropped) << " extra." << std::endl;
+        // if (resent_packets.size() != n_dropped) {
+        //     assert(resent_packets.size() == n_dropped);
+        // }
 
         // By looking at the number of trailing zeroes in the list of
         // coefficients of p, the server can determine a lower bound on the
@@ -159,7 +189,7 @@ int main() {
             // superset of the (multi)set of sent packets. (The sets may not be
             // strictly equal, because some packets may have been unnecessarily
             // re-sent due to hash collisions.)
-            if (is_subset(sent_packets, received_packets)) {
+            if (is_subset(packets, received_packets)) {
                 ++num_successful_recoveries;
             } else {
                 ++num_erroneous_recoveries;
@@ -172,6 +202,7 @@ int main() {
 
         }
 
+        packet_hashes.clear();
         received_packets.clear();
         received_packets.reserve(NUM_PACKETS_SENT);
         resent_packets.clear();

@@ -22,7 +22,7 @@ constexpr std::size_t count_trailing_zeros(
 
 template <typename T_NARROW, typename T_WIDE,
           T_NARROW MODULUS, std::size_t SIZE>
-consteval std::array<ModularInteger<T_NARROW, T_WIDE, MODULUS>, SIZE>
+std::array<ModularInteger<T_NARROW, T_WIDE, MODULUS>, SIZE>
 power_table(T_NARROW x) noexcept {
     std::array<ModularInteger<T_NARROW, T_WIDE, MODULUS>, SIZE> result;
     const ModularInteger<T_NARROW, T_WIDE, MODULUS> x_mod(x);
@@ -35,6 +35,7 @@ power_table(T_NARROW x) noexcept {
 }
 
 
+#if 0
 template <std::uint16_t MODULUS, std::size_t SIZE>
 consteval std::array<
     std::array<ModularInteger<std::uint16_t, std::uint32_t, MODULUS>, SIZE>,
@@ -47,7 +48,7 @@ consteval std::array<
     }
     return result;
 }
-
+#endif
 
 template <typename T_NARROW, typename T_WIDE,
           T_NARROW MODULUS, std::size_t SIZE>
@@ -76,13 +77,15 @@ struct MonicPolynomialEvaluator<std::uint16_t, std::uint32_t, MODULUS, SIZE> {
 
     using ModInt = ModularInteger<std::uint16_t, std::uint32_t, MODULUS>;
 
-    static constexpr auto power_tables = power_tables_16<MODULUS, SIZE>();
+    // static constexpr auto power_tables = power_tables_16<MODULUS, SIZE>();
 
     static constexpr ModInt eval(
         const std::array<ModInt, SIZE> &coeffs,
         std::uint16_t x
     ) noexcept {
-        const std::array<ModInt, SIZE> power_table = power_tables[x];
+        // const std::array<ModInt, SIZE> power_table = power_tables[x];
+        std::array<ModInt, SIZE> power_table =
+            ::power_table<std::uint16_t, std::uint32_t, MODULUS, SIZE>(x);
         std::uint64_t result = 0;
         for (std::size_t i = 0; i < SIZE - 1; ++i) {
             result += static_cast<std::uint64_t>(coeffs[i].value) *
