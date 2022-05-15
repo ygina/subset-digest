@@ -74,11 +74,11 @@ fn calculate_difference_iblt(
         iblt_sum += difference_count;
 
         // Additionally set the data value
-        let logged_data = iblt.data().get(i);
-        let received_data = received_iblt.data().get(i);
+        let logged_data = iblt.data()[i];
+        let received_data = received_iblt.data()[i];
         let difference_data =
             (Wrapping(logged_data) - Wrapping(received_data)).0;
-        iblt.data_mut().set(i, difference_data);
+        iblt.data_mut()[i] = difference_data;
     }
 
     // If the number of dropped packets multiplied by the number of hashes is
@@ -248,7 +248,7 @@ struct MiniIBLTAccumulator {
     count: u16,        // expect ~1024 = 2^10
     seed: u64,         // seed for multiset hash, IBLT hash
     counters: Vec<u8>, // bits_per_val = IBLT_BITS_PER_ENTRY
-    data: Vec<u8>,     // bits_per_val = DJB_HASH_SIZE
+    data: Vec<u32>,
 }
 
 impl IBLTAccumulator {
@@ -302,7 +302,7 @@ impl IBLTAccumulator {
         let mut iblt: InvBloomLookupTable<u32> = InvBloomLookupTable::new_with_seed(
             x.seed, data_size, bits_per_entry, num_entries, num_hashes);
         *iblt.counters_mut() = to_valuevec(x.counters, bits_per_entry);
-        *iblt.data_mut() = to_valuevec(x.data, data_size as usize);
+        *iblt.data_mut() = x.data;
         Self {
             digest: Digest {
                 hash: x.hash,
@@ -327,7 +327,7 @@ impl Accumulator for IBLTAccumulator {
             count: self.digest.count as u16,
             seed: u64::from_be_bytes(self.digest.nonce),
             counters: self.iblt.counters().bits.to_bytes(),
-            data: self.iblt.data().bits.to_bytes(),
+            data: self.iblt.data().clone(),
         }).unwrap()
     }
 
@@ -633,11 +633,11 @@ mod tests {
             diff.counters().get(counter_wrap),
             ((1 << bpe) - 1) - d2.counters().get(counter_wrap) + d1.counters().get(counter_wrap) + 1);
         assert_eq!(
-            diff.data().get(data_no_wrap),
-            d1.data().get(data_no_wrap) - d2.data().get(data_no_wrap));
+            diff.data()[data_no_wrap],
+            d1.data()[data_no_wrap] - d2.data()[data_no_wrap]);
         assert_eq!(
-            diff.data().get(data_wrap),  // u32
-            u32::max_value() - d2.data().get(data_wrap) + d1.data().get(data_wrap) + 1);
+            diff.data()[data_wrap],  // u32
+            u32::max_value() - d2.data()[data_wrap] + d1.data()[data_wrap] + 1);
     }
 
     #[test]

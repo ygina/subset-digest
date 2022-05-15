@@ -27,7 +27,7 @@ impl From<SipHasher13Def> for SipHasher13 {
 pub struct InvBloomLookupTable<T> {
     counters: ValueVec,
     // sum of djb_hashed data with wraparound overflow
-    data: ValueVec,
+    data: Vec<u32>,
     num_entries: u64,
     num_hashes: u32,
     seed: u64,
@@ -77,7 +77,7 @@ impl<T> InvBloomLookupTable<T> {
         use rand::{SeedableRng, rngs::SmallRng, Rng};
         let mut rng = SmallRng::seed_from_u64(seed);
         InvBloomLookupTable {
-            data: ValueVec::new(data_size as usize, num_entries),
+            data: vec![0; num_entries],
             counters: ValueVec::new(bits_per_entry, num_entries),
             num_entries: num_entries as u64,
             num_hashes,
@@ -90,10 +90,9 @@ impl<T> InvBloomLookupTable<T> {
 
     /// Clones the InvBloomLookupTable where all counters are 0.
     pub fn empty_clone(&self) -> Self {
-        let data_size = self.data.bits_per_val();
         let bits_per_entry = self.counters.bits_per_val();
         Self {
-            data: ValueVec::new(data_size, self.num_entries as usize),
+            data: vec![0; self.num_entries as usize],
             counters: ValueVec::new(bits_per_entry, self.num_entries as usize),
             num_entries: self.num_entries,
             num_hashes: self.num_hashes,
@@ -104,11 +103,11 @@ impl<T> InvBloomLookupTable<T> {
         }
     }
 
-    pub fn data(&self) -> &ValueVec {
+    pub fn data(&self) -> &Vec<u32> {
         &self.data
     }
 
-    pub fn data_mut(&mut self) -> &mut ValueVec {
+    pub fn data_mut(&mut self) -> &mut Vec<u32> {
         &mut self.data
     }
 
@@ -181,8 +180,7 @@ impl<T> InvBloomLookupTable<T> {
             } else {
                 self.counters.set(idx, 0);
             }
-            self.data.set(
-                idx, (Wrapping(self.data.get(idx)) + Wrapping(item)).0);
+            self.data[idx] = (Wrapping(self.data[idx]) + Wrapping(item)).0;
         }
         min > 0
     }
@@ -200,8 +198,7 @@ impl<T> InvBloomLookupTable<T> {
             } else {
                 self.counters.set(idx, cur - 1);
             }
-            self.data.set(
-                idx, (Wrapping(self.data.get(idx)) - Wrapping(item)).0);
+            self.data[idx] = (Wrapping(self.data[idx]) - Wrapping(item)).0;
         }
     }
 
@@ -239,7 +236,7 @@ impl<T> InvBloomLookupTable<T> {
                 if self.counters.get(i) != 1 {
                     continue;
                 }
-                let item = self.data.get(i).clone();
+                let item = self.data[i];
                 self.remove(item);
                 assert!(removed_set.insert(item));
                 removed = true;
@@ -356,10 +353,9 @@ mod tests {
         (0..num_entries).map(|i| vec.get(i)).sum::<u32>() as usize
     }
 
-    fn data_is_nonzero(vec: &ValueVec) -> bool {
-        let num_entries = vec.len() / vec.bits_per_val();
-        for i in 0..num_entries {
-            if vec.get(i) != 0 {
+    fn data_is_nonzero(vec: &Vec<u32>) -> bool {
+        for i in 0..vec.len() {
+            if vec[i] != 0 {
                 return true;
             }
         }
@@ -389,7 +385,7 @@ mod tests {
         assert_eq!(iblt.num_entries(), 100);
         assert_eq!(iblt.num_hashes(), 2);
         assert_eq!(vvsum(iblt.counters()), 0);
-        assert_eq!(vvsum(iblt.data()), 0);
+        assert_eq!(iblt.data().iter().sum::<u32>(), 0);
     }
 
     #[test]
@@ -423,19 +419,19 @@ mod tests {
         let indexes = iblt.indexes(elem);
         for &idx in &indexes {
             assert_eq!(iblt.counters().get(idx), 0);
-            assert_eq!(iblt.data().get(idx), 0);
+            assert_eq!(iblt.data()[idx], 0);
         }
         assert!(!iblt.insert(elem), "element did not exist already");
         assert_eq!(vvsum(iblt.counters()), 1 * iblt.num_hashes() as usize);
         for &idx in &indexes {
             assert_ne!(iblt.counters().get(idx), 0);
-            assert_ne!(iblt.data().get(idx), 0);
+            assert_ne!(iblt.data()[idx], 0);
         }
         assert!(iblt.insert(elem), "added element twice");
         assert_eq!(vvsum(iblt.counters()), 2 * iblt.num_hashes() as usize);
         for &idx in &indexes {
             assert_ne!(iblt.counters().get(idx), 0);
-            assert_ne!(iblt.data().get(idx), 0);
+            assert_ne!(iblt.data()[idx], 0);
         }
     }
 
@@ -448,7 +444,7 @@ mod tests {
         assert!(vvsum(iblt1.counters()) > 0);
         assert_eq!(vvsum(iblt2.counters()), 0);
         assert!(data_is_nonzero(iblt1.data()));
-        assert_eq!(vvsum(iblt2.data()), 0);
+        assert_eq!(iblt2.data().iter().sum::<u32>(), 0);
         assert_eq!(
             iblt1.indexes(1234),
             iblt2.indexes(1234));
@@ -465,12 +461,12 @@ mod tests {
         // counters and data are updated
         iblt.insert(elem);
         assert_eq!(iblt.counters().get(i), 1);
-        assert_eq!(iblt.data().get(i), elem);
+        assert_eq!(iblt.data()[i], elem);
 
         // on overflow, counter is zero but data is nonzero
         iblt.insert(elem);
         assert_eq!(iblt.counters().get(i), 0);
-        assert_eq!(iblt.data().get(i), elem * 2);
+        assert_eq!(iblt.data()[i], elem * 2);
     }
 
     #[test]
@@ -483,13 +479,13 @@ mod tests {
         // counters and data are updated
         iblt.insert(elem);
         assert_eq!(iblt.counters().get(i), 1);
-        assert_eq!(iblt.data().get(i), elem);
+        assert_eq!(iblt.data()[i], elem);
 
         // on overflow, counter is zero but data is nonzero
         iblt.insert(elem);
         iblt.insert(elem);
         assert_eq!(iblt.counters().get(i), 3);
-        assert!(iblt.data().get(i) < elem);
+        assert!(iblt.data()[i] < elem);
     }
 
     #[test]
@@ -506,7 +502,7 @@ mod tests {
         let mut elems = iblt.eliminate_elems();
         assert_eq!(elems.len(), n);
         assert_eq!(vvsum(iblt.counters()), 0);
-        assert_eq!(vvsum(iblt.data()), 0);
+        assert_eq!(iblt.data().iter().sum::<u32>(), 0);
         for elem in 0..(n as u32) {
             assert!(elems.remove(&elem));
         }
