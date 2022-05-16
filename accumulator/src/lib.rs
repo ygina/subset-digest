@@ -8,6 +8,8 @@ mod power_sum;
 use std::hash::Hasher;
 use djb_hash::{HasherU32, x33a_u32::*};
 
+type Data = bloom_sd::iblt::Data;
+
 pub use iblt::*;
 pub use naive::NaiveAccumulator;
 pub use power_sum::PowerSumAccumulator;
@@ -20,6 +22,10 @@ pub fn elem_to_u32(elem: &[u8]) -> u32 {
     let mut hasher = X33aU32::new();
     hasher.write(&elem);
     hasher.finish_u32()
+}
+
+pub fn elem_to_data(elem: &[u8]) -> Data {
+    (elem_to_u32(elem) & (Data::max_value() as u32)) as Data
 }
 
 #[derive(Debug, PartialEq, Eq)]
