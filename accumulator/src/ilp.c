@@ -26,8 +26,7 @@
  *   to set in the ILP matrix. for example, the first `n_hashes` entries
  *   indicates the indices to set in the first row of the matrix, based on
  *   which buckets the first packet hashes to (which can be repeated).
- * - pkt_bucket_sums: array of shape [n_pkts, n_buckets] where the i,j entry
- *   indicates the contribution packet i would make to the sum of bucket j.
+ * - pkt_data: vector of length `n_packets` of the hashed packets.
  * - n_dropped: expected number of dropped packets
  *
  * Returns:
@@ -41,33 +40,33 @@ int32_t solve_ilp_glpk(size_t n_buckets,
                        size_t n_hashes,
                        size_t n_packets,
                        uint32_t *pkt_hashes,
-                       uint32_t *pkt_bucket_sums,
+                       uint32_t *pkt_data,
                        size_t n_dropped,
                        size_t *dropped) {
+    // TODO: delete zero counters.
     glp_prob *prob = glp_create_prob();
-
     // First n_buckets rows are for the counts, second are for the hashes.
     glp_add_rows(prob, 2 * n_buckets);
     // First n_packets cols are for the packets (IVs), second are for the
-    // modulus slacks.
+    // modulus slacks, bounded by the counts.
     glp_add_cols(prob, n_packets + n_buckets);
-    // Set the count rows/cols
     for (size_t i = 0; i < n_buckets; i++) {
         // This row = the number of dropped packets which land in this bucket.
         VERBOSE_DO(printf("[GLPK] Setting row bound %zu to %zu\n", i + 1, cbf[i]);)
         glp_set_row_bnds(prob, i + 1, GLP_FX, cbf[i], cbf[i]);
     }
+    // Packet variables are binary
     for (size_t j = 0; j < n_packets; j++) glp_set_col_kind(prob, j + 1, GLP_BV);
     // Set the hash rows/cols
     for (size_t i = 0; i < n_buckets; i++) {
-        // This row = the sum from the bucket.
+        // This row = the sum from the bucket - k * modulus.
         size_t glpk_id = i + 1 + n_buckets;
         VERBOSE_DO(printf("[GLPK] Setting row bound %zu to %zu\n", i + 1, sums[i]);)
         glp_set_row_bnds(prob, glpk_id, GLP_FX, sums[i], sums[i]);
     }
     for (size_t j = 0; j < n_buckets; j++) {
         glp_set_col_kind(prob, n_packets + j + 1, GLP_IV);
-        glp_set_col_bnds(prob, n_packets + j + 1, GLP_FR, 0, 0);
+        glp_set_col_bnds(prob, n_packets + j + 1, GLP_FR, 0, cbf[j]);
     }
 
     // The (i, j) entry is:
@@ -79,39 +78,53 @@ int32_t solve_ilp_glpk(size_t n_buckets,
     // We do one column at a time. Note that a double should fit all int33s.
     // TODO(masot): may overflow if we have lots of things summing into the
     // same spot, but should be OK because mod 2**32 ? ...
-    size_t max_rows = n_hashes + n_buckets + 1;
-    int *indices = malloc(max_rows * sizeof(indices[0]));
-    double *values = malloc(max_rows * sizeof(values[0]));
-    for (size_t j = 0; j < n_packets + n_buckets; j++) {
-        memset(indices, 0, max_rows * sizeof(indices[0]));
-        memset(values, 0, max_rows * sizeof(values[0]));
-
+    size_t size = 2 * n_hashes + 1;
+    int *indices = malloc(size * sizeof(indices[0]));
+    double *values = malloc(size * sizeof(values[0]));
+    for (size_t j = 0; j < n_packets; j++) {
+        memset(indices, 0, size * sizeof(indices[0]));
+        memset(values, 0, size * sizeof(values[0]));
         size_t len = 0;
 
-        if (j < n_packets) {
-            for (size_t h = 0; h < n_hashes; h++) {
-                int bucket = pkt_hashes[j*n_hashes + h] + 1;
-                for (size_t i = 1; i <= len; i++) {
-                    if (indices[i] != bucket) continue;
-                    values[i]++;
-                    goto next_hash;
-                }
-                indices[++len] = bucket;
-                values[len]++;
-next_hash:      continue;
+        // Set the counts.
+        for (size_t h = 0; h < n_hashes; h++) {
+            int bucket = pkt_hashes[j*n_hashes + h] + 1;
+            // Handle hash functions hashing the packet to the same buckets
+            for (size_t i = 1; i <= len; i++) {
+                if (indices[i] != bucket) continue;
+                values[i]++;
+                goto next_hash;
             }
+            indices[++len] = bucket;
+            values[len]++;
+next_hash:  continue;
+        }
 
-            for (size_t i = 0; i < n_buckets; i++) {
-                if (!(pkt_bucket_sums[(j * n_buckets) + i])) continue;
-                indices[++len] = n_buckets + i + 1;
-                values[len] = pkt_bucket_sums[(j * n_buckets) + i];
+        // Set the data values.
+        for (size_t h = 0; h < n_hashes; h++) {
+            int bucket = pkt_hashes[j*n_hashes + h] + 1 + n_buckets;
+            // Handle hash functions hashing the packet to the same buckets
+            for (size_t i = 1; i <= len; i++) {
+                if (indices[i] != bucket) continue;
+                values[i] += pkt_data[j];
+                goto next_hash2;
             }
-        } else {
-            indices[++len] = n_buckets + (j - n_packets) + 1;
-            values[len] = modulus;
+            indices[++len] = bucket;
+            values[len] += pkt_data[j];
+next_hash2: continue;
         }
 
         glp_set_mat_col(prob, j + 1, len, indices, values);
+    }
+
+    // Set constraints on the modulus
+    memset(indices, 0, size * sizeof(indices[0]));
+    memset(values, 0, size * sizeof(values[0]));
+    for (size_t j = 0; j < n_buckets; j++) {
+        indices[1] = n_buckets + j + 1;
+        values[1] = modulus;
+
+        glp_set_mat_col(prob, n_packets + j + 1, 1, indices, values);
     }
     free(indices); free(values);
 

@@ -25,7 +25,7 @@ extern "C" {
         n_hashes: usize,
         n_packets: usize,
         pkt_hashes: *const u32,
-        pkt_bucket_sums: *const u32,
+        pkt_data: *const u32,
         n_dropped: usize,
         dropped: *mut usize,
     ) -> i32;
@@ -196,28 +196,25 @@ fn solve_ilp_for_iblt(
     // Number of equations = # of remaining candidate elements in `elems_i`.
     // Number of variables = number of cells in the IBLT.
     let mut elems_i: Vec<usize> = vec![];
-    let data_elems: Vec<Data> = elems
+    let mut pkt_data: Vec<u32> = vec![];
+    let pkt_hashes: Vec<u32> = elems
         .iter()
         .map(|elem| crate::elem_to_data(elem))
-        .collect();
-    let pkt_hashes: Vec<u32> = data_elems
-        .iter()
         .enumerate()
-        .filter(|(_, &data_elem)| iblt.contains(data_elem))
-        .flat_map(|(i, &data_elem)| {
+        .filter(|(_, data_elem)| iblt.contains(*data_elem))
+        .flat_map(|(i, data_elem)| {
             elems_i.push(i);
+            pkt_data.push(data_elem);
             iblt.indexes(data_elem)
         })
         .map(|hash| hash as u32)
         .collect();
-    let pkt_bucket_sums: Vec<u32> = iblt.bucket_sums(&data_elems);
     let counters: Vec<usize> = (0..(iblt.num_entries() as usize))
         .map(|i| iblt.counters().get(i))
         .map(|count| count.try_into().unwrap())
         .collect();
     let sums: Vec<u32> = (0..(iblt.num_entries() as usize))
-        .map(|i| *iblt.data().get(i).unwrap())
-        .map(|data| data.try_into().unwrap())
+        .map(|i| *iblt.data().get(i).unwrap() as u32)
         .collect();
     assert!(n_dropped_remaining <= elems_i.len());
     debug!("setup system of {} eqs in {} vars (expect sols to sum to {})",
@@ -237,11 +234,11 @@ fn solve_ilp_for_iblt(
             counters.len(),
             counters.as_ptr(),
             sums.as_ptr(),
-            (1 as u64) << (32 as u64),
+            (Data::max_value() as u64) + 1,
             iblt.num_hashes() as usize,
             elems_i.len(),
             pkt_hashes.as_ptr(),
-            pkt_bucket_sums.as_ptr(), // should be an array sized n_packets x n_buckets
+            pkt_data.as_ptr(),
             n_dropped_remaining,
             dropped.as_mut_ptr(),
         )
@@ -853,7 +850,7 @@ mod tests {
     }
 
     #[test]
-    fn test_solve_ilp_for_iblt_failure_whp() {
+    fn test_solve_ilp_for_iblt_no_longer_fails_with_data_fields_whp() {
         let n_logged = 1000;
         let n_dropped = 100;
         let elems = gen_elems_with_seed(n_logged, 123);
@@ -880,6 +877,6 @@ mod tests {
         for dropped_i in result {
             d_expected = d_expected && dropped_is.remove(&dropped_i);
         }
-        assert!(!d_expected);
+        assert!(d_expected);
     }
 }
