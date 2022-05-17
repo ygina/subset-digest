@@ -25,7 +25,15 @@ pub fn elem_to_u32(elem: &[u8]) -> u32 {
 }
 
 pub fn elem_to_data(elem: &[u8]) -> Data {
-    (elem_to_u32(elem) & (Data::max_value() as u32)) as Data
+    // special case u32 and u16 identity
+    // we assume the benchmarking code generates random values already...
+    if elem.len() == 4 {
+        u32::from_be_bytes(elem.try_into().unwrap()) as Data
+    } else if elem.len() == 2 {
+        u16::from_be_bytes(elem.try_into().unwrap()) as Data
+    } else {
+        (elem_to_u32(elem) & (Data::max_value() as u32)) as Data
+    }
 }
 
 #[derive(Debug, PartialEq, Eq)]

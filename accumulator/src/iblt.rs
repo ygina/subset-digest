@@ -637,6 +637,7 @@ mod tests {
         }
         assert!(counter_no_wrap < (d1.num_entries() as usize));
         // TODO: find one that also wraps for u16
+        // TODO: also doesn't work for u32 identity mapping
         assert!(counter_wrap < (d1.num_entries() as usize));
         assert!(data_no_wrap < (d1.num_entries() as usize));
         assert!(data_wrap < (d1.num_entries() as usize));
