@@ -204,7 +204,9 @@ fn solve_ilp_for_iblt(
         .filter(|(_, data_elem)| iblt.contains(*data_elem))
         .flat_map(|(i, data_elem)| {
             elems_i.push(i);
-            pkt_data.push(data_elem);
+            // Need to cast to u32 for C compatibility.
+            // Assume mapping is always to u32 or smaller (u16 or u8).
+            pkt_data.push(data_elem as u32);
             iblt.indexes(data_elem)
         })
         .map(|hash| hash as u32)

@@ -79,7 +79,10 @@ fn validate(
 
 fn median<T: std::ops::Add<Output = T>
            + std::ops::Div<u32, Output = T>
-           + Copy + PartialOrd + Ord>(mut results: Vec<T>) -> T {
+           + Copy + PartialOrd + Ord + Default>(mut results: Vec<T>) -> T {
+    if results.len() == 0 {
+        return T::default()
+    }
     results.sort();
     let mid = results.len() / 2;
     if results.len() & 1 == 0 {
